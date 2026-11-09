@@ -1,4 +1,4 @@
-import { Layers, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react'
+import { CircleCheck, ImagePlus, Layers, Loader2, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
 import { useToast } from '../components/Toast'
@@ -17,12 +17,22 @@ import {
   TextField,
 } from '../components/ui'
 import { formatPrice } from '../lib/format'
+import { formatBytes, optimizeToWebp, type OptimizedImage } from '../lib/imageOptimize'
 import { resolveIcon, SERVICE_ICONS } from '../lib/serviceIcons'
 import { supabase } from '../lib/supabase'
 import type { Service } from '../lib/types'
 import { must, useLoad } from '../lib/useLoad'
 
 type ServiceRow = Service & { listings: number; active: number; bookings: number; from: number | null }
+
+const BUCKET = 'service-images'
+
+/** Object path inside our bucket for a public URL we created, or null for anything else. */
+function storagePath(url: string | null | undefined) {
+  const marker = `/storage/v1/object/public/${BUCKET}/`
+  const i = url?.indexOf(marker) ?? -1
+  return url && i >= 0 ? decodeURIComponent(url.slice(i + marker.length)) : null
+}
 
 async function loadServices(): Promise<ServiceRow[]> {
   const [services, listings, bookings] = await Promise.all([
@@ -103,7 +113,20 @@ export function Services() {
           {visible.map((s) => {
             const { Icon } = resolveIcon(s)
             return (
-              <Card key={s.id} className="flex flex-col p-5 transition hover:shadow-pop">
+              <Card key={s.id} className="flex flex-col overflow-hidden transition hover:shadow-pop">
+                {s.image_url ? (
+                  <img src={s.image_url} alt="" className="h-32 w-full bg-brand-50/60 object-contain p-2" loading="lazy" />
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setEditing(s)}
+                    className="flex h-32 w-full cursor-pointer flex-col items-center justify-center gap-1 bg-slate-50 text-slate-400 transition hover:bg-brand-50 hover:text-brand-700"
+                  >
+                    <ImagePlus className="size-5" />
+                    <span className="text-xs font-semibold">No illustration yet — add one</span>
+                  </button>
+                )}
+                <div className="flex flex-1 flex-col gap-5 p-5">
                 <div className="flex items-start gap-4">
                   <span className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-brand-50 text-brand-700">
                     <Icon className="size-6" />
@@ -117,10 +140,11 @@ export function Services() {
                     <IconButton icon={Trash2} label="Delete service" tone="danger" onClick={() => setDeleting(s)} />
                   </div>
                 </div>
-                <div className="mt-5 grid grid-cols-3 gap-2 border-t border-slate-100 pt-4 text-center">
+                <div className="mt-auto grid grid-cols-3 gap-2 border-t border-slate-100 pt-4 text-center">
                   <Metric label="Providers" value={`${s.active}/${s.listings}`} />
                   <Metric label="Bookings" value={String(s.bookings)} />
                   <Metric label="From / hr" value={s.from !== null ? formatPrice(s.from) : '—'} />
+                </div>
                 </div>
               </Card>
             )
@@ -168,20 +192,71 @@ function ServiceForm({ service, onClose, onSaved }: { service: Service | null; o
   const [name, setName] = useState(service?.name ?? '')
   const [description, setDescription] = useState(service?.description ?? '')
   const [icon, setIcon] = useState(service ? resolveIcon(service).value : 'toolbox-outline')
+  const [imageUrl, setImageUrl] = useState<string | null>(service?.image_url ?? null)
+  const [optimized, setOptimized] = useState<OptimizedImage | null>(null)
+  const [optimizing, setOptimizing] = useState(false)
+  const [preview, setPreview] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+
+  async function pickFile(f: File | null) {
+    if (!f) return
+    setOptimizing(true)
+    try {
+      // Any format in → small WebP out (resized to max 640px, compressed to ~150 KB).
+      const out = await optimizeToWebp(f)
+      if (preview) URL.revokeObjectURL(preview)
+      setOptimized(out)
+      setPreview(URL.createObjectURL(out.blob))
+    } catch (e) {
+      toast.error((e as Error).message)
+    } finally {
+      setOptimizing(false)
+    }
+  }
+
+  function removePhoto() {
+    if (preview) URL.revokeObjectURL(preview)
+    setOptimized(null)
+    setPreview(null)
+    setImageUrl(null)
+  }
 
   async function save() {
     if (!name.trim()) return toast.error('Please enter a service name.')
     setBusy(true)
-    const payload = { name: name.trim(), description: description.trim(), icon }
-    const { error } = service
-      ? await supabase.from('services').update(payload).eq('id', service.id)
-      : await supabase.from('services').insert(payload)
-    setBusy(false)
-    if (error) return toast.error(error.code === '23505' ? 'A service with this name already exists.' : error.message)
-    toast.success(service ? 'Service updated' : 'Service added')
-    onSaved()
+    try {
+      let image_url = imageUrl
+      if (optimized) {
+        const path = `${crypto.randomUUID()}.webp`
+        const up = await supabase.storage
+          .from(BUCKET)
+          .upload(path, optimized.blob, { contentType: 'image/webp', cacheControl: '31536000' })
+        if (up.error) {
+          throw up.error.message.toLowerCase().includes('bucket not found')
+            ? new Error('Image storage is not set up yet — run the latest supabase/schema.sql in the Supabase SQL Editor, then try again.')
+            : up.error
+        }
+        image_url = supabase.storage.from(BUCKET).getPublicUrl(path).data.publicUrl
+      }
+      const payload = { name: name.trim(), description: description.trim(), icon, image_url }
+      const { error } = service
+        ? await supabase.from('services').update(payload).eq('id', service.id)
+        : await supabase.from('services').insert(payload)
+      if (error) throw error
+      // Clean up the old photo file if it was replaced or removed (best effort).
+      const old = storagePath(service?.image_url)
+      if (old && service?.image_url !== image_url) await supabase.storage.from(BUCKET).remove([old])
+      toast.success(service ? 'Service updated' : 'Service added')
+      onSaved()
+    } catch (e) {
+      const err = e as { code?: string; message?: string }
+      toast.error(err.code === '23505' ? 'A service with this name already exists.' : (err.message ?? 'Could not save'))
+    } finally {
+      setBusy(false)
+    }
   }
+
+  const shown = preview ?? imageUrl
 
   return (
     <Modal
@@ -195,7 +270,7 @@ function ServiceForm({ service, onClose, onSaved }: { service: Service | null; o
           <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>
-          <Button onClick={save} loading={busy}>
+          <Button onClick={save} loading={busy} disabled={optimizing}>
             {service ? 'Save changes' : 'Add service'}
           </Button>
         </>
@@ -204,6 +279,50 @@ function ServiceForm({ service, onClose, onSaved }: { service: Service | null; o
       <div className="space-y-4">
         <TextField label="Name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Plumber" />
         <TextArea label="Short description" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What does this service include?" />
+
+        <div>
+          <p className="mb-2 text-[13px] font-semibold text-slate-700">Illustration</p>
+          {optimizing ? (
+            <div className="flex h-44 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 text-sm font-medium text-slate-600">
+              <Loader2 className="size-4 animate-spin text-brand-600" /> Optimizing image…
+            </div>
+          ) : shown ? (
+            <div className="relative overflow-hidden rounded-2xl border border-slate-200">
+              <img src={shown} alt="" className="h-44 w-full bg-brand-50 object-contain p-3" />
+              <div className="absolute right-2 bottom-2 flex gap-2">
+                <label className="cursor-pointer rounded-lg bg-white/95 px-3 py-1.5 text-xs font-semibold text-ink shadow hover:bg-white">
+                  Change
+                  <input type="file" accept="image/*" className="sr-only" onChange={(e) => pickFile(e.target.files?.[0] ?? null)} />
+                </label>
+                <button type="button" onClick={removePhoto} className="cursor-pointer rounded-lg bg-white/95 px-3 py-1.5 text-xs font-semibold text-red-600 shadow hover:bg-white">
+                  Remove
+                </button>
+              </div>
+            </div>
+          ) : (
+            <label
+              className="flex h-36 cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50 text-center transition hover:border-brand-400 hover:bg-brand-50/40"
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                e.preventDefault()
+                pickFile(e.dataTransfer.files?.[0] ?? null)
+              }}
+            >
+              <ImagePlus className="size-6 text-brand-600" />
+              <span className="text-sm font-semibold text-ink">Upload an illustration</span>
+              <span className="text-xs text-slate-500">Click or drag & drop · any image (JPG, PNG, WebP, GIF…) · transparent PNG looks best · auto-converted to a small WebP</span>
+              <input type="file" accept="image/*" className="sr-only" onChange={(e) => pickFile(e.target.files?.[0] ?? null)} />
+            </label>
+          )}
+          {optimized ? (
+            <p className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700">
+              <CircleCheck className="size-3.5" />
+              Optimized: {formatBytes(optimized.originalBytes)} → {formatBytes(optimized.bytes)} WebP · {optimized.width}×{optimized.height}px
+              {optimized.originalBytes > optimized.bytes ? ` (${Math.round((1 - optimized.bytes / optimized.originalBytes) * 100)}% smaller)` : ''}
+            </p>
+          ) : null}
+          <p className="mt-1.5 text-xs text-slate-500">Shown on the service cards in the app and on the service page, on a soft coloured background. Without one, the app shows the service icon.</p>
+        </div>
         <div>
           <p className="mb-2 text-[13px] font-semibold text-slate-700">Icon</p>
           <div className="grid grid-cols-4 gap-2 sm:grid-cols-6">

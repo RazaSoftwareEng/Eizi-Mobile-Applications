@@ -1,11 +1,11 @@
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { Redirect, router, usePathname } from 'expo-router';
 import { Drawer, DrawerContentScrollView, type DrawerContentComponentProps } from 'expo-router/drawer';
-import { useState } from 'react';
-import { Alert, Pressable, Text, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { Alert, Image, Pressable, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Avatar, Loader, useStatusBar, type IconName } from '@/components/ui';
+import { Avatar, Loader, type IconName } from '@/components/ui';
 import { supabase } from '@/lib/supabase';
 import { colors, shadow } from '@/lib/theme';
 import type { Role } from '@/lib/types';
@@ -24,7 +24,6 @@ export type MenuItem = {
 /** Top app bar + slide-out side menu, only for a signed-in user with the given role. */
 export function RoleDrawer({ role, items }: { role: Role; items: MenuItem[] }) {
   const { session, profile, loading } = useAuth();
-  useStatusBar('light');
 
   if (loading) return <Loader />;
   if (!session) return <Redirect href="/login" />;
@@ -35,45 +34,27 @@ export function RoleDrawer({ role, items }: { role: Role; items: MenuItem[] }) {
   return (
     <Drawer
       drawerContent={(props) => <SideMenu {...props} role={role} items={items} />}
-      screenOptions={({ navigation }) => ({
+      screenOptions={({ navigation, route }) => ({
         drawerType: 'front',
         overlayColor: 'rgba(15, 23, 42, 0.45)',
         drawerStyle: { width: 300, backgroundColor: colors.white },
         swipeEdgeWidth: 40,
         sceneStyle: { backgroundColor: colors.surface },
-        headerStyle: { backgroundColor: colors.brandDeep },
+        // Light app bar; on the customer home it matches the top of the hero gradient so they read as one surface.
+        headerStyle: { backgroundColor: route.name === 'index' || route.name === 'profile' ? colors.heroTop : colors.surface },
         headerShadowVisible: false,
-        headerTintColor: colors.white,
+        headerTintColor: colors.ink,
         headerTitleAlign: 'center',
         headerTitle: () => (
           <Pressable onPress={() => router.navigate(home as never)} className="flex-row items-center gap-2" accessibilityLabel="Eizi home">
-            <View className="h-8 w-8 items-center justify-center rounded-xl bg-white">
-              <Text className="text-base font-black text-brand-700">E</Text>
-            </View>
-            <Text className="text-lg font-extrabold tracking-tight text-white">Eizi</Text>
+            <Image source={require('../../assets/splash-icon.png')} style={[{ width: 36, height: 36 }, shadow.sm]} />
+            <Text className="text-xl font-extrabold tracking-tight text-ink">Eizi</Text>
           </Pressable>
         ),
         headerLeft: () => (
-          <Pressable
-            onPress={() => navigation.openDrawer()}
-            accessibilityRole="button"
-            accessibilityLabel="Open menu"
-            hitSlop={8}
-            className="ml-3 h-10 w-10 items-center justify-center rounded-xl bg-white/10 active:bg-white/20"
-          >
-            <Ionicons name="menu" size={24} color={colors.white} />
-          </Pressable>
+          <RoundButton icon="menu" label="Open menu" onPress={() => navigation.openDrawer()} style={{ marginLeft: 16 }} />
         ),
-        headerRight: () => (
-          <Pressable
-            onPress={() => router.navigate(`/${role}/profile` as never)}
-            accessibilityRole="button"
-            accessibilityLabel="Open profile"
-            className="mr-3"
-          >
-            <Avatar name={profile?.full_name ?? ''} size={36} light />
-          </Pressable>
-        ),
+        headerRight: () => <AlertsBell role={role} />,
       })}
     >
       {items.map((i) => (
@@ -83,11 +64,77 @@ export function RoleDrawer({ role, items }: { role: Role; items: MenuItem[] }) {
   );
 }
 
+function RoundButton({ icon, label, onPress, style }: { icon: IconName; label: string; onPress: () => void; style?: object }) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      hitSlop={6}
+      className="h-11 w-11 items-center justify-center rounded-full bg-white active:bg-slate-50"
+      style={[shadow.md, style]}
+    >
+      <Ionicons name={icon} size={22} color={colors.ink} />
+    </Pressable>
+  );
+}
+
+/**
+ * Bell that leads to what needs attention, with a dot when something does:
+ * providers → new booking requests; customers → confirmed upcoming bookings.
+ */
+function AlertsBell({ role }: { role: Role }) {
+  const { session } = useAuth();
+  const pathname = usePathname();
+  const [count, setCount] = useState(0);
+
+  useEffect(() => {
+    if (!session) return;
+    let alive = true;
+    const check = async () => {
+      const q = supabase.from('bookings').select('id', { count: 'exact', head: true });
+      const { count: c } =
+        role === 'provider'
+          ? await q.eq('provider_id', session.user.id).eq('status', 'pending')
+          : await q.eq('customer_id', session.user.id).eq('status', 'accepted').gte('scheduled_at', new Date().toISOString());
+      if (alive) setCount(c ?? 0);
+    };
+    check();
+    const t = setInterval(check, 60_000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, [session, role, pathname]);
+
+  const label =
+    role === 'provider'
+      ? count ? `${count} new booking request${count > 1 ? 's' : ''}` : 'Booking requests'
+      : count ? `${count} confirmed upcoming booking${count > 1 ? 's' : ''}` : 'My bookings';
+
+  return (
+    <View style={{ marginRight: 16 }}>
+      <RoundButton
+        icon="notifications-outline"
+        label={label}
+        onPress={() => router.navigate((role === 'provider' ? '/provider' : '/customer/bookings') as never)}
+      />
+      {count ? (
+        <View
+          pointerEvents="none"
+          className="absolute -right-0.5 -top-0.5 h-4 min-w-4 items-center justify-center rounded-full border-2 border-white bg-red-500 px-0.5"
+        >
+          {count > 1 ? <Text className="text-[9px] font-bold text-white">{count > 9 ? '9+' : count}</Text> : null}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
 function SideMenu({ navigation, role, items }: DrawerContentComponentProps & { role: Role; items: MenuItem[] }) {
-  const { session, profile, refreshProfile, signOut } = useAuth();
+  const { session, profile, signOut } = useAuth();
   const insets = useSafeAreaInsets();
   const pathname = usePathname();
-  const [switching, setSwitching] = useState(false);
 
   const isProvider = role === 'provider';
   const name = profile?.full_name || 'Your name';
@@ -95,24 +142,6 @@ function SideMenu({ navigation, role, items }: DrawerContentComponentProps & { r
   function go(href: string) {
     navigation.closeDrawer();
     router.navigate(href as never);
-  }
-
-  async function switchRole() {
-    if (!profile) return;
-    setSwitching(true);
-    const { error } = await supabase
-      .from('profiles')
-      .update({ role: isProvider ? 'customer' : 'provider' })
-      .eq('id', profile.id);
-    if (error) {
-      setSwitching(false);
-      Alert.alert('Could not switch', error.message);
-      return;
-    }
-    navigation.closeDrawer();
-    await refreshProfile();
-    setSwitching(false);
-    router.replace('/');
   }
 
   function confirmLogout() {
@@ -169,24 +198,6 @@ function SideMenu({ navigation, role, items }: DrawerContentComponentProps & { r
             </Pressable>
           );
         })}
-
-        <View className="my-3 h-px bg-slate-100" />
-        <Text className="mb-2 px-3 text-[11px] font-bold uppercase tracking-widest text-slate-400">Account</Text>
-
-        <Pressable
-          onPress={switching ? undefined : switchRole}
-          className="mb-1 flex-row items-center gap-3 rounded-2xl px-3 py-3 active:bg-slate-50"
-        >
-          <View className="h-9 w-9 items-center justify-center rounded-xl bg-accent-50">
-            <Ionicons name="swap-horizontal" size={19} color={colors.accentDark} />
-          </View>
-          <View className="flex-1">
-            <Text className="text-[15px] font-semibold text-slate-700">
-              {isProvider ? 'Switch to customer' : 'Become a provider'}
-            </Text>
-            <Text className="text-xs text-slate-400">{isProvider ? 'Book services for yourself' : 'Earn with your skills'}</Text>
-          </View>
-        </Pressable>
       </DrawerContentScrollView>
 
       {/* Footer */}

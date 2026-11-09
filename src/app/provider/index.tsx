@@ -4,10 +4,11 @@ import { useCallback, useMemo, useState } from 'react';
 import { Alert, FlatList, RefreshControl, Text, View } from 'react-native';
 
 import { BOOKING_SELECT, BookingCard, type BookingRow } from '@/components/BookingCard';
+import { HomeHero } from '@/components/HomeHero';
 import { Button, EmptyState, Loader, Segmented, type IconName } from '@/components/ui';
 import { formatPrice } from '@/lib/format';
 import { supabase } from '@/lib/supabase';
-import { colors } from '@/lib/theme';
+import { colors, shadow } from '@/lib/theme';
 import type { BookingStatus } from '@/lib/types';
 import { useAuth } from '@/providers/AuthProvider';
 
@@ -101,20 +102,27 @@ export default function ProviderRequests() {
         }
         ListHeaderComponent={
           <View>
-            {/* Dashboard header */}
-            <View className="overflow-hidden rounded-b-[32px] bg-brand-900 px-5 pb-6 pt-3">
-              <View className="absolute -right-20 -top-16 h-60 w-60 rounded-full bg-white/5" />
-              <Text className="text-sm font-medium text-brand-200">Provider dashboard</Text>
-              <Text className="mt-0.5 text-2xl font-bold text-white">Hi, {name.split(' ')[0] || 'there'}</Text>
-
-              <View className="mt-5 flex-row gap-3">
-                <Stat icon="notifications" label="New" value={String(counts.new)} />
-                <Stat icon="calendar" label="Upcoming" value={String(counts.upcoming)} />
-                <Stat icon="wallet" label="Earned" value={formatPrice(earned)} wide />
+            {/* Dashboard header — same hero as the customer home */}
+            <HomeHero name={name} line1="Here's what's" line2="waiting for" highlight="you">
+              <View className="mt-6 flex-row gap-3">
+                <Stat icon="notifications" tint="amber" label="New requests" value={String(counts.new)} />
+                <Stat icon="calendar" tint="blue" label="Upcoming" value={String(counts.upcoming)} />
               </View>
-            </View>
+              <View className="mt-3 flex-row items-center gap-4 overflow-hidden rounded-3xl p-5" style={{ backgroundImage: 'linear-gradient(120deg, #0B6358 0%, #14917F 100%)' }}>
+                <View className="absolute -right-6 -top-8 h-28 w-28 rounded-full bg-white/10" />
+                <View className="h-12 w-12 items-center justify-center rounded-2xl bg-white/15">
+                  <Ionicons name="wallet" size={24} color={colors.white} />
+                </View>
+                <View className="flex-1">
+                  <Text className="text-[13px] font-medium text-brand-100">Total earned · completed jobs</Text>
+                  <Text className="text-2xl font-extrabold tracking-tight text-white" numberOfLines={1} adjustsFontSizeToFit>
+                    {formatPrice(earned)}
+                  </Text>
+                </View>
+              </View>
+            </HomeHero>
 
-            <View className="mt-5 px-5">
+            <View className="mt-1 px-5">
               <Segmented<Filter>
                 value={filter}
                 onChange={setFilter}
@@ -190,16 +198,20 @@ export default function ProviderRequests() {
   );
 }
 
-function Stat({ icon, label, value, wide }: { icon: IconName; label: string; value: string; wide?: boolean }) {
+const statTints = {
+  amber: { bg: 'bg-amber-50', fg: '#B45309' },
+  blue: { bg: 'bg-sky-50', fg: '#0369A1' },
+} as const;
+
+function Stat({ icon, tint, label, value }: { icon: IconName; tint: keyof typeof statTints; label: string; value: string }) {
+  const t = statTints[tint];
   return (
-    <View className={`rounded-2xl bg-white/10 p-3.5 ${wide ? 'flex-[1.6]' : 'flex-1'}`}>
-      <View className="flex-row items-center gap-1.5">
-        <Ionicons name={icon} size={14} color={colors.white} />
-        <Text className="text-xs font-medium text-brand-100">{label}</Text>
+    <View className="flex-1 rounded-3xl bg-white p-4" style={shadow.md}>
+      <View className={`h-10 w-10 items-center justify-center rounded-xl ${t.bg}`}>
+        <Ionicons name={icon} size={20} color={t.fg} />
       </View>
-      <Text className="mt-1.5 text-xl font-bold text-white" numberOfLines={1} adjustsFontSizeToFit>
-        {value}
-      </Text>
+      <Text className="mt-3 text-[26px] font-extrabold tracking-tight text-ink">{value}</Text>
+      <Text className="text-[13px] font-medium text-slate-500">{label}</Text>
     </View>
   );
 }

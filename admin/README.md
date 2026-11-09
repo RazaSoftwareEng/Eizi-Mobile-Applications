@@ -48,3 +48,19 @@ To remove an admin: `delete from public.admins where user_id = '…';`
 - User emails and last sign-in times stay private in `auth.users`; only admins can read them via `admin_list_accounts()`.
 - Deleting a user goes through `admin_delete_user()`, which re-checks admin rights in the database.
 - The portal uses only the public publishable key — never put the `service_role` key in this app.
+
+## Deploy on Vercel
+
+1. **Import** the Git repo in Vercel and set **Root Directory = `admin`** (the repo root is the Expo app).
+   Framework preset: **Vite** · Build command `npm run build` · Output directory `dist`.
+2. **Settings → Environment Variables** — add both (Production + Preview), using the same values as your local `admin/.env`:
+
+   | Name | Value |
+   | --- | --- |
+   | `VITE_SUPABASE_URL` | `https://<project-ref>.supabase.co` |
+   | `VITE_SUPABASE_PUBLISHABLE_KEY` | your publishable / anon key (never the `service_role` key) |
+
+3. **Redeploy** (Deployments → ⋯ → Redeploy). Vite bakes env vars in at build time, so a redeploy is required after adding them.
+
+`vercel.json` already rewrites every path to `index.html`, so refreshing `/users`, `/bookings` etc. works (no 404),
+and adds `noindex` + basic security headers.

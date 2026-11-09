@@ -83,11 +83,9 @@ export function Button({
       disabled={inactive}
       accessibilityRole="button"
       accessibilityState={{ disabled: !!inactive, busy: !!loading }}
-      className={`flex-row items-center justify-center gap-2 rounded-2xl px-5 ${size === 'lg' ? 'h-14' : 'h-12'} ${s.box} ${className}`}
-      style={({ pressed }) => [
-        inactive ? undefined : s.shadow,
-        { opacity: inactive ? 0.5 : pressed ? 0.85 : 1, transform: [{ scale: pressed && !inactive ? 0.98 : 1 }] },
-      ]}
+      // Plain style object (not a function) — NativeWind doesn't reliably merge function styles with className on device.
+      className={`flex-row items-center justify-center gap-2 rounded-2xl px-5 ${size === 'lg' ? 'h-14' : 'h-12'} ${s.box} ${inactive ? 'opacity-50' : 'active:opacity-80'} ${className}`}
+      style={inactive ? undefined : s.shadow}
     >
       {loading ? (
         <ActivityIndicator color={s.icon} />

@@ -5,7 +5,7 @@ import { Alert, KeyboardAvoidingView, Platform, ScrollView, Text, View } from 'r
 
 import { Avatar, Button, Card, Input, ListRow } from '@/components/ui';
 import { supabase } from '@/lib/supabase';
-import { colors } from '@/lib/theme';
+import { colors, shadow } from '@/lib/theme';
 import { useAuth } from '@/providers/AuthProvider';
 
 export function ProfileScreen() {
@@ -58,22 +58,24 @@ export function ProfileScreen() {
     <KeyboardAvoidingView className="flex-1 bg-surface" behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <ScrollView contentContainerClassName="pb-10" keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
         {/* Header */}
-        <View className="items-center overflow-hidden rounded-b-[32px] bg-brand-900 px-5 pb-10 pt-4">
-          <View className="absolute -right-20 -top-16 h-60 w-60 rounded-full bg-white/5" />
-          <View className="rounded-full border-4 border-white/20">
-            <Avatar name={profile.full_name} size={84} light />
+        <View
+          className="items-center overflow-hidden px-5 pb-8 pt-4"
+          style={{ backgroundImage: `linear-gradient(180deg, ${colors.heroTop} 0%, ${colors.surface} 100%)` }}
+        >
+          <View className="rounded-full bg-white p-1.5" style={shadow.lg}>
+            <Avatar name={profile.full_name} size={84} />
           </View>
-          <Text className="mt-4 text-2xl font-bold text-white">{profile.full_name || 'Your name'}</Text>
-          <Text className="mt-1 text-[15px] text-brand-200">{session.user.email}</Text>
-          <View className="mt-4 flex-row items-center gap-2 rounded-full bg-white/15 px-4 py-1.5">
-            <MaterialCommunityIcons name={isProvider ? 'account-hard-hat' : 'home-heart'} size={15} color={colors.white} />
-            <Text className="text-xs font-bold uppercase tracking-wider text-white">
+          <Text className="mt-4 text-2xl font-extrabold tracking-tight text-ink">{profile.full_name || 'Your name'}</Text>
+          <Text className="mt-1 text-[15px] text-slate-500">{session.user.email}</Text>
+          <View className="mt-4 flex-row items-center gap-2 rounded-full bg-white px-4 py-1.5" style={shadow.sm}>
+            <MaterialCommunityIcons name={isProvider ? 'account-hard-hat' : 'home-heart'} size={15} color={colors.brand} />
+            <Text className="text-xs font-bold uppercase tracking-wider text-brand-700">
               {isProvider ? 'Service provider' : 'Customer'}
             </Text>
           </View>
         </View>
 
-        <View className="-mt-6 gap-4 px-5">
+        <View className="gap-4 px-5">
           {/* Personal info */}
           <Card className="gap-4 p-5">
             <Text className="text-base font-bold text-ink">Personal information</Text>

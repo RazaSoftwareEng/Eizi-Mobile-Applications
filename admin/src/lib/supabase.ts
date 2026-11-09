@@ -1,11 +1,17 @@
 import { createClient } from '@supabase/supabase-js'
 
-const url = import.meta.env.VITE_SUPABASE_URL as string | undefined
-const key = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string | undefined
+const url = (import.meta.env.VITE_SUPABASE_URL as string | undefined)?.trim()
+const key = (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string | undefined)?.trim()
 
-if (!url || !key) {
-  throw new Error('Missing VITE_SUPABASE_URL / VITE_SUPABASE_PUBLISHABLE_KEY in admin/.env')
-}
+/**
+ * True when the build has no Supabase settings (e.g. env vars not added on Vercel).
+ * main.tsx shows a setup screen instead of a blank page.
+ */
+export const missingConfig = !url || !key
+
+// Placeholder values only so the module can load; nothing calls Supabase while `missingConfig` is true.
+const SUPABASE_URL = url || 'https://missing-config.invalid'
+const SUPABASE_KEY = key || 'missing-config'
 
 /* ---------- "Remember me" ----------
  * Ticked   → session kept in localStorage (stays signed in after the browser is closed).
@@ -58,8 +64,8 @@ const sessionStore = {
     }, undefined),
 }
 
-export const supabase = createClient(url, key, {
-  auth: { storageKey: 'eizi-admin-auth', storage: sessionStore, persistSession: true, autoRefreshToken: true },
+export const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
+  auth: { storageKey: 'eizi-admin-auth', storage: sessionStore, persistSession: !missingConfig, autoRefreshToken: !missingConfig },
 })
 
 /**
@@ -67,7 +73,7 @@ export const supabase = createClient(url, key, {
  * It never stores a session, so signing a new user up does not log the admin out.
  */
 export function signupClient() {
-  return createClient(url!, key!, {
+  return createClient(SUPABASE_URL, SUPABASE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false, storageKey: 'eizi-admin-signup' },
   })
 }

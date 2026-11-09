@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { FlatList, Text, View } from 'react-native';
+import { FlatList, Image, Text, View } from 'react-native';
 
 import { Avatar, Button, Card, EmptyState, Loader, ServiceIcon } from '@/components/ui';
 import { formatPrice } from '@/lib/format';
@@ -58,12 +58,21 @@ export default function ServiceProviders() {
         ListHeaderComponent={
           service ? (
             <View className="mb-2">
-              <View className="flex-row items-center gap-4 rounded-3xl p-5" style={{ backgroundColor: tint.bg }}>
-                <ServiceIcon service={service} tintId={service.id} size={64} onColor />
+              <View className="flex-row items-center gap-3 overflow-hidden rounded-3xl p-5" style={{ backgroundColor: tint.bg }}>
                 <View className="flex-1">
                   <Text className="text-2xl font-bold text-ink">{service.name}</Text>
                   <Text className="mt-1 leading-5 text-slate-600">{service.description}</Text>
                 </View>
+                {service.image_url ? (
+                  <Image
+                    source={{ uri: service.image_url }}
+                    style={{ width: 112, height: 96, marginVertical: -8 }}
+                    resizeMode="contain"
+                    accessibilityLabel={`${service.name} illustration`}
+                  />
+                ) : (
+                  <ServiceIcon service={service} tintId={service.id} size={64} onColor />
+                )}
               </View>
 
               {offers.length ? (

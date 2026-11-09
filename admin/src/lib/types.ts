@@ -34,6 +34,7 @@ export type Service = {
   name: string
   icon: string
   description: string
+  image_url: string | null
 }
 
 export type Listing = {

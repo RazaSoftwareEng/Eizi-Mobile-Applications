@@ -14,6 +14,8 @@ export const colors = {
   subtle: '#94A3B8',
   line: '#E2E8F0',
   surface: '#F5F7FA',
+  /** Top of the customer-home hero gradient; the app bar uses it on that screen so both read as one surface. */
+  heroTop: '#E6F6F2',
   white: '#FFFFFF',
   danger: '#DC2626',
   success: '#16A34A',

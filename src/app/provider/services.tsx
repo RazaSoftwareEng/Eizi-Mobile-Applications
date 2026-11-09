@@ -167,8 +167,8 @@ function IconButton({ icon, label, onPress, danger }: {
     <Pressable
       onPress={onPress}
       accessibilityLabel={label}
-      className={`flex-row items-center gap-1 rounded-xl px-3 py-2 ${danger ? 'bg-red-50' : 'bg-brand-50'}`}
-      style={({ pressed }) => [pressed ? undefined : shadow.sm, { opacity: pressed ? 0.7 : 1 }]}
+      className={`flex-row items-center gap-1 rounded-xl px-3 py-2 active:opacity-70 ${danger ? 'bg-red-50' : 'bg-brand-50'}`}
+      style={shadow.sm}
     >
       <Ionicons name={icon} size={16} color={danger ? colors.danger : colors.brandDark} />
       <Text className={`text-[13px] font-semibold ${danger ? 'text-red-600' : 'text-brand-700'}`}>{label}</Text>

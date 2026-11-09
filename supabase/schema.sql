@@ -71,6 +71,9 @@ create table if not exists public.services (
   description  text not null default ''
 );
 
+-- Optional cover photo shown on the app's service cards (uploaded from the admin portal).
+alter table public.services add column if not exists image_url text;
+
 -- ---------- What each provider offers + their hourly price ----------
 create table if not exists public.provider_services (
   id           bigint generated always as identity primary key,
@@ -326,3 +329,23 @@ insert into public.services (name, icon, description) values
   ('Driver',         'car-outline', 'Personal driver for your own car'),
   ('Gardener',       'flower-outline', 'Lawn, plants and garden upkeep')
 on conflict (name) do update set icon = excluded.icon;
+
+-- ---------- Storage: service cover photos ----------
+-- Public bucket (anyone can view the photos in the app); only admins can upload, replace or delete.
+-- The admin portal converts every upload to a small WebP (max 640px, ~150 KB), so the bucket only accepts WebP up to 1 MB.
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('service-images', 'service-images', true, 1048576, array['image/webp'])
+on conflict (id) do update
+  set public = true, file_size_limit = excluded.file_size_limit, allowed_mime_types = excluded.allowed_mime_types;
+
+drop policy if exists "admins upload service images" on storage.objects;
+create policy "admins upload service images" on storage.objects
+  for insert to authenticated with check (bucket_id = 'service-images' and public.is_admin());
+
+drop policy if exists "admins update service images" on storage.objects;
+create policy "admins update service images" on storage.objects
+  for update to authenticated using (bucket_id = 'service-images' and public.is_admin());
+
+drop policy if exists "admins delete service images" on storage.objects;
+create policy "admins delete service images" on storage.objects
+  for delete to authenticated using (bucket_id = 'service-images' and public.is_admin());

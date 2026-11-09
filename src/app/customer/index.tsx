@@ -1,47 +1,67 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
-import { FlatList, Pressable, RefreshControl, Text, TextInput, View } from 'react-native';
+import { Keyboard, Pressable, RefreshControl, ScrollView, Text, TextInput, View, useWindowDimensions } from 'react-native';
 
-import { EmptyState, Loader, SectionTitle, ServiceIcon } from '@/components/ui';
-import { formatPrice } from '@/lib/format';
+import { HomeHero } from '@/components/HomeHero';
+import { GRID_GAP, GRID_PADDING, HowItWorks, ServiceCard, ServiceRow, cardWidthFor, type ServiceStat } from '@/components/ServiceBrowse';
+import { EmptyState, Loader, ServiceIcon, StatusBadge } from '@/components/ui';
+import { formatDateTime } from '@/lib/format';
+import { groupServices } from '@/lib/serviceGroups';
 import { supabase } from '@/lib/supabase';
 import { colors, shadow } from '@/lib/theme';
-import type { Service } from '@/lib/types';
+import type { BookingStatus, Service } from '@/lib/types';
 import { useAuth } from '@/providers/AuthProvider';
 
-type Stats = Record<number, { count: number; from: number }>;
-
-function greeting() {
-  const h = new Date().getHours();
-  if (h < 12) return 'Good morning';
-  if (h < 17) return 'Good afternoon';
-  return 'Good evening';
-}
+type Stats = Record<number, ServiceStat>;
+type NextBooking = {
+  id: number;
+  service_id: number;
+  scheduled_at: string;
+  hours: number;
+  status: BookingStatus;
+  service: { name: string; icon: string } | null;
+  provider: { full_name: string } | null;
+};
 
 export default function CustomerHome() {
-  const { profile } = useAuth();
+  const { profile, session } = useAuth();
+  const { width: screenWidth } = useWindowDimensions();
+  const cardWidth = cardWidthFor(screenWidth);
 
   const [services, setServices] = useState<Service[]>([]);
   const [stats, setStats] = useState<Stats>({});
+  const [next, setNext] = useState<NextBooking | null>(null);
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async () => {
-    const [svc, offers] = await Promise.all([
+    const [svc, offers, upcoming] = await Promise.all([
       supabase.from('services').select('*').order('name'),
       supabase.from('provider_services').select('service_id, hourly_rate').eq('is_active', true),
+      session
+        ? supabase
+            .from('bookings')
+            .select('id, service_id, scheduled_at, hours, status, service:services(name, icon), provider:profiles!bookings_provider_id_fkey(full_name)')
+            .eq('customer_id', session.user.id)
+            .in('status', ['pending', 'accepted'])
+            .gte('scheduled_at', new Date().toISOString())
+            .order('scheduled_at')
+            .limit(1)
+            .maybeSingle()
+        : Promise.resolve({ data: null }),
     ]);
     setServices((svc.data as Service[]) ?? []);
-    const next: Stats = {};
+    const s: Stats = {};
     for (const o of (offers.data ?? []) as { service_id: number; hourly_rate: number }[]) {
       const rate = Number(o.hourly_rate);
-      const cur = next[o.service_id];
-      next[o.service_id] = cur ? { count: cur.count + 1, from: Math.min(cur.from, rate) } : { count: 1, from: rate };
+      const cur = s[o.service_id];
+      s[o.service_id] = cur ? { count: cur.count + 1, from: Math.min(cur.from, rate) } : { count: 1, from: rate };
     }
-    setStats(next);
-  }, []);
+    setStats(s);
+    setNext((upcoming.data as unknown as NextBooking | null) ?? null);
+  }, [session]);
 
   useFocusEffect(
     useCallback(() => {
@@ -49,131 +69,159 @@ export default function CustomerHome() {
     }, [load]),
   );
 
-  const filtered = useMemo(() => {
+  const results = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const list = q ? services.filter((s) => s.name.toLowerCase().includes(q)) : services;
-    // Services that have providers first.
-    return [...list].sort((a, b) => (stats[b.id]?.count ?? 0) - (stats[a.id]?.count ?? 0));
+    if (!q) return [];
+    return services
+      .filter((s) => s.name.toLowerCase().includes(q) || s.description.toLowerCase().includes(q))
+      .sort((a, b) => (stats[b.id]?.count ?? 0) - (stats[a.id]?.count ?? 0));
   }, [services, query, stats]);
+
+  const groups = useMemo(() => groupServices(services), [services]);
+
+  function openService(id: number) {
+    router.push({ pathname: '/service/[id]', params: { id: String(id) } });
+  }
+
+  function onSearchSubmit() {
+    Keyboard.dismiss();
+    if (results.length === 1) openService(results[0].id);
+  }
 
   if (loading) return <Loader />;
 
-  const name = profile?.full_name || '';
-  const firstName = name.split(' ')[0] || 'there';
+  const searching = query.trim().length > 0;
 
   return (
-    <View className="flex-1 bg-surface">
-      <FlatList
-        data={filtered}
-        keyExtractor={(s) => String(s.id)}
-        numColumns={2}
-        columnWrapperClassName="gap-3 px-5"
-        contentContainerClassName="gap-3 pb-10"
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            tintColor={colors.brand}
-            onRefresh={async () => {
-              setRefreshing(true);
-              await load();
-              setRefreshing(false);
-            }}
+    <ScrollView
+      className="flex-1 bg-surface"
+      contentContainerClassName="pb-12"
+      keyboardShouldPersistTaps="handled"
+      showsVerticalScrollIndicator={false}
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          tintColor={colors.brand}
+          onRefresh={async () => {
+            setRefreshing(true);
+            await load();
+            setRefreshing(false);
+          }}
+        />
+      }
+    >
+      <HomeHero name={profile?.full_name ?? ''} line1="What can we help" line2="you with" highlight="today?">
+        <View className="mt-6 h-16 flex-row items-center gap-3 rounded-full bg-white pl-5 pr-2" style={shadow.lg}>
+          <Ionicons name="search" size={22} color={colors.brand} />
+          <TextInput
+            className="flex-1 text-base text-ink"
+            placeholder="Search cook, electrician, plumber…"
+            placeholderTextColor={colors.subtle}
+            value={query}
+            onChangeText={setQuery}
+            returnKeyType="search"
+            onSubmitEditing={onSearchSubmit}
+            accessibilityLabel="Search services"
           />
-        }
-        ListHeaderComponent={
-          <View>
-            {/* Brand header */}
-            <View className="overflow-hidden rounded-b-[32px] bg-brand-900 px-5 pb-16 pt-3">
-              <View className="absolute -right-20 -top-16 h-60 w-60 rounded-full bg-white/5" />
-              <Text className="text-sm font-medium text-brand-200">
-                {greeting()}, <Text className="font-bold text-white">{firstName}</Text>
-              </Text>
-              <Text className="mt-2 text-[28px] font-bold leading-9 tracking-tight text-white">
-                What can we help{'\n'}you with today?
-              </Text>
-            </View>
+          {query ? (
+            <Pressable hitSlop={10} onPress={() => setQuery('')} accessibilityLabel="Clear search">
+              <Ionicons name="close-circle" size={20} color={colors.subtle} />
+            </Pressable>
+          ) : null}
+          <Pressable
+            onPress={onSearchSubmit}
+            accessibilityRole="button"
+            accessibilityLabel="Search"
+            className="h-12 w-12 items-center justify-center rounded-full bg-brand-700 active:bg-brand-800"
+            style={shadow.brand}
+          >
+            <Ionicons name="arrow-forward" size={22} color={colors.white} />
+          </Pressable>
+        </View>
+      </HomeHero>
 
-            {/* Search — overlaps the header */}
-            <View className="-mt-7 px-5">
-              <View className="h-14 flex-row items-center gap-3 rounded-2xl bg-white px-4" style={shadow.lg}>
-                <Ionicons name="search" size={20} color={colors.brand} />
-                <TextInput
-                  className="flex-1 text-base text-ink"
-                  placeholder="Search cook, electrician, plumber…"
-                  placeholderTextColor={colors.subtle}
-                  value={query}
-                  onChangeText={setQuery}
-                  returnKeyType="search"
-                />
-                {query ? (
-                  <Pressable hitSlop={10} onPress={() => setQuery('')} accessibilityLabel="Clear search">
-                    <Ionicons name="close-circle" size={20} color={colors.subtle} />
-                  </Pressable>
-                ) : null}
+      {searching ? (
+        /* ---------------- Search results ---------------- */
+        <View className="pt-1">
+          <Text className="mb-3 px-5 text-sm font-semibold text-slate-500">
+            {results.length} result{results.length === 1 ? '' : 's'} for “{query.trim()}”
+          </Text>
+          {results.length ? (
+            results.map((s) => <ServiceRow key={s.id} service={s} stat={stats[s.id]} onPress={() => openService(s.id)} />)
+          ) : (
+            <EmptyState icon="search" title="No services found" subtitle="Try another word, like “cook”, “clean” or “wiring”." />
+          )}
+        </View>
+      ) : (
+        <>
+          {/* ---------------- Next booking ---------------- */}
+          {next ? (
+            <Pressable
+              onPress={() => router.navigate('/customer/bookings')}
+              className="mx-5 mb-6 flex-row items-center gap-3 rounded-3xl bg-white p-4"
+              style={shadow.md}
+              accessibilityRole="button"
+              accessibilityLabel="Open your next booking"
+            >
+              <ServiceIcon service={next.service} tintId={next.service_id} size={48} />
+              <View className="flex-1">
+                <Text className="text-xs font-semibold uppercase tracking-wider text-slate-400">Your next booking</Text>
+                <Text className="mt-0.5 text-base font-bold text-ink" numberOfLines={1}>
+                  {next.service?.name} · {next.hours} hr{next.hours > 1 ? 's' : ''}
+                </Text>
+                <Text className="text-[13px] text-slate-500" numberOfLines={1}>
+                  {formatDateTime(next.scheduled_at)}
+                  {next.provider?.full_name ? ` · ${next.provider.full_name}` : ''}
+                </Text>
+              </View>
+              <StatusBadge status={next.status} />
+            </Pressable>
+          ) : null}
+
+          {/* ---------------- Services: grouped, illustrated cards ---------------- */}
+          {groups.map((g) => (
+            <View key={g.title} className="mb-4">
+              <SectionHead title={g.title} subtitle={`${g.items.filter((s) => stats[s.id]).length} of ${g.items.length} available now`} />
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', columnGap: GRID_GAP, paddingHorizontal: GRID_PADDING }}>
+                {[...g.items]
+                  .sort((a, b) => (stats[b.id] ? 1 : 0) - (stats[a.id] ? 1 : 0))
+                  .map((s) => (
+                    <ServiceCard key={s.id} service={s} stat={stats[s.id]} width={cardWidth} onPress={() => openService(s.id)} />
+                  ))}
               </View>
             </View>
+          ))}
 
-            {/* Promo */}
-            {!query ? (
-              <View className="mx-5 mt-6 flex-row items-center gap-4 rounded-3xl bg-accent-50 p-5">
-                <View className="h-12 w-12 items-center justify-center rounded-2xl bg-accent-100">
-                  <Ionicons name="time" size={24} color={colors.accentDark} />
-                </View>
-                <View className="flex-1">
-                  <Text className="text-base font-bold text-ink">Pay only for the hours you need</Text>
-                  <Text className="mt-0.5 text-[13px] leading-5 text-slate-600">
-                    Pick 1, 2 or more hours and see the full price before you book.
-                  </Text>
-                </View>
-              </View>
-            ) : null}
-
-            <View className="mt-7 px-5">
-              <SectionTitle
-                title={query ? `Results for “${query}”` : 'All services'}
-                subtitle={query ? undefined : 'Tap a service to see available pros'}
-              />
+          {/* ---------------- Promo ---------------- */}
+          <View
+            className="mx-5 mb-7 mt-3 flex-row items-center gap-4 overflow-hidden rounded-3xl p-5"
+            style={{ backgroundImage: 'linear-gradient(120deg, #0B6358 0%, #14917F 100%)' }}
+          >
+            <View className="absolute -right-6 -top-8 h-28 w-28 rounded-full bg-white/10" />
+            <View className="h-12 w-12 items-center justify-center rounded-2xl bg-white/15">
+              <Ionicons name="time" size={24} color={colors.white} />
+            </View>
+            <View className="flex-1">
+              <Text className="text-base font-bold text-white">Pay only for the hours you need</Text>
+              <Text className="mt-0.5 text-[13px] leading-5 text-brand-100">
+                Pick 1, 2 or more hours and see the full price before you book.
+              </Text>
             </View>
           </View>
-        }
-        ListEmptyComponent={<EmptyState icon="search" title="No services found" subtitle="Try another word, like “cook” or “clean”." />}
-        renderItem={({ item }) => {
-          const s = stats[item.id];
-          return (
-            <Pressable
-              onPress={() => router.push({ pathname: '/service/[id]', params: { id: String(item.id) } })}
-              accessibilityRole="button"
-              accessibilityLabel={`${item.name}${s ? `, ${s.count} providers` : ''}`}
-              className="flex-1 rounded-3xl bg-white p-4"
-              style={({ pressed }) => [shadow.md, { maxWidth: '48.4%', transform: [{ scale: pressed ? 0.97 : 1 }] }]}
-            >
-              <ServiceIcon service={item} tintId={item.id} />
-              <Text className="mt-4 text-base font-bold text-ink" numberOfLines={1}>
-                {item.name}
-              </Text>
-              {s ? (
-                <>
-                  <Text className="mt-1 text-[13px] text-slate-500">
-                    {s.count} {s.count === 1 ? 'pro' : 'pros'} available
-                  </Text>
-                  <Text className="mt-2 text-[13px] font-semibold text-brand-700">
-                    from {formatPrice(s.from)}/hr
-                  </Text>
-                </>
-              ) : (
-                <>
-                  <Text className="mt-1 text-[13px] text-slate-500" numberOfLines={1}>
-                    {item.description}
-                  </Text>
-                  <Text className="mt-2 text-[13px] font-medium text-slate-400">Coming soon</Text>
-                </>
-              )}
-            </Pressable>
-          );
-        }}
-      />
+
+          {/* ---------------- How it works ---------------- */}
+          <HowItWorks />
+        </>
+      )}
+    </ScrollView>
+  );
+}
+
+function SectionHead({ title, subtitle }: { title: string; subtitle?: string }) {
+  return (
+    <View className="mb-3 px-5">
+      <Text className="text-lg font-bold text-ink">{title}</Text>
+      {subtitle ? <Text className="text-[13px] text-slate-500">{subtitle}</Text> : null}
     </View>
   );
 }
