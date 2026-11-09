@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { FlatList, Image, Text, View } from 'react-native';
+import { FlatList, Image, Pressable, Text, View } from 'react-native';
 
 import { Avatar, Button, Card, EmptyState, Loader, ServiceIcon } from '@/components/ui';
 import { formatPrice } from '@/lib/format';
@@ -14,7 +14,7 @@ type Offer = {
   id: number;
   hourly_rate: number;
   description: string;
-  provider: { id: string; full_name: string; created_at: string } | null;
+  provider: { id: string; full_name: string; created_at: string; avatar_url: string | null; bio: string } | null;
 };
 
 export default function ServiceProviders() {
@@ -30,7 +30,7 @@ export default function ServiceProviders() {
         supabase.from('services').select('*').eq('id', id).single(),
         supabase
           .from('provider_services')
-          .select('id, hourly_rate, description, provider:profiles(id, full_name, created_at)')
+          .select('id, hourly_rate, description, provider:profiles(id, full_name, created_at, avatar_url, bio)')
           .eq('service_id', id)
           .eq('is_active', true)
           .order('hourly_rate'),
@@ -100,7 +100,7 @@ export default function ServiceProviders() {
           return (
             <Card className="p-4">
               <View className="flex-row items-center gap-3">
-                <Avatar name={item.provider?.full_name ?? ''} size={52} />
+                <Avatar name={item.provider?.full_name ?? ''} size={52} uri={item.provider?.avatar_url} />
                 <View className="flex-1">
                   <Text className="text-base font-bold text-ink" numberOfLines={1}>
                     {item.provider?.full_name || 'Provider'}
@@ -118,6 +118,7 @@ export default function ServiceProviders() {
                   {item.description}
                 </Text>
               ) : null}
+              {item.provider?.bio ? <ProviderBio bio={item.provider.bio} /> : null}
 
               <View className="mt-4 flex-row items-center gap-2">
                 <View className="flex-1 flex-row items-center gap-1.5">
@@ -149,5 +150,23 @@ function Fact({ icon, label }: { icon: 'people' | 'pricetag'; label: string }) {
         {label}
       </Text>
     </Card>
+  );
+}
+
+function ProviderBio({ bio }: { bio: string }) {
+  const [open, setOpen] = useState(false);
+  const long = bio.length > 160;
+  return (
+    <View className="mt-3 rounded-2xl bg-surface p-3">
+      <Text className="mb-1 text-[11px] font-bold uppercase tracking-wider text-slate-400">About</Text>
+      <Text className="text-[13px] leading-5 text-slate-600" numberOfLines={open ? undefined : 3}>
+        {bio}
+      </Text>
+      {long ? (
+        <Pressable onPress={() => setOpen((o) => !o)} hitSlop={8} className="mt-1 self-start">
+          <Text className="text-[13px] font-semibold text-brand-700">{open ? 'Show less' : 'Read more'}</Text>
+        </Pressable>
+      ) : null}
+    </View>
   );
 }

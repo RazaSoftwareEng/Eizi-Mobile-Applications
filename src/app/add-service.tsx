@@ -5,6 +5,7 @@ import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, Vie
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Button, Card, Input, Loader, PriceRow, ServiceIcon } from '@/components/ui';
+import { suggestedDescriptions } from '@/lib/serviceDescriptions';
 import { supabase } from '@/lib/supabase';
 import { colors, shadow } from '@/lib/theme';
 import type { Service } from '@/lib/types';
@@ -80,6 +81,7 @@ export default function AddService() {
 
   if (loading) return <Loader />;
 
+  const selectedService = services.find((s) => s.id === selected) ?? null;
   const choices = editing ? services.filter((s) => s.id === selected) : services.filter((s) => !taken.has(s.id));
   const preview = Number(rate) > 0 ? Number(rate) : 0;
 
@@ -150,6 +152,36 @@ export default function AddService() {
             onChangeText={setDescription}
             multiline
           />
+
+          {/* One-tap ready-made descriptions for the chosen service */}
+          {selectedService ? (
+            <View>
+              <View className="mb-2 flex-row items-center gap-1.5">
+                <Ionicons name="sparkles" size={14} color={colors.accentDark} />
+                <Text className="text-[13px] font-bold text-ink">Suggested for {selectedService.name}</Text>
+              </View>
+              <Text className="mb-3 text-xs text-slate-500">Tap one to use it — you can still edit it above.</Text>
+              <View className="gap-2">
+                {suggestedDescriptions(selectedService.name).map((text) => {
+                  const used = description.trim() === text;
+                  return (
+                    <Pressable
+                      key={text}
+                      onPress={() => setDescription(text)}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Use description: ${text}`}
+                      className={`flex-row items-start gap-3 rounded-2xl border p-3 active:opacity-80 ${used ? 'border-brand-600 bg-brand-50' : 'border-line bg-surface'}`}
+                    >
+                      <Text className="flex-1 text-[13px] leading-5 text-slate-700">{text}</Text>
+                      <View className={`mt-0.5 rounded-full px-2 py-0.5 ${used ? 'bg-brand-700' : 'bg-white'}`}>
+                        <Text className={`text-[11px] font-bold ${used ? 'text-white' : 'text-brand-700'}`}>{used ? 'Added' : 'Use'}</Text>
+                      </View>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+          ) : null}
         </Card>
       </ScrollView>
 

@@ -180,6 +180,11 @@ export function Bookings() {
                   <p className="text-xs text-slate-500 tabular-nums">
                     {formatPrice(b.hourly_rate)} × {b.hours}
                   </p>
+                  {b.payment_method === 'wallet' ? (
+                    <span className="mt-1 inline-flex rounded-md bg-brand-50 px-1.5 py-0.5 text-[11px] font-semibold text-brand-700">
+                      Wallet · {b.payment_status === 'held' ? 'held' : b.payment_status === 'released' ? 'paid out' : b.payment_status === 'refunded' ? 'refunded' : b.payment_status}
+                    </span>
+                  ) : null}
                 </Td>
                 <Td>
                   <div className="flex flex-col items-start gap-1.5">

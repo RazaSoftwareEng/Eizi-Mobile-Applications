@@ -1,0 +1,45 @@
+# Runs on every push to main (connected via expo.dev → project → GitHub).
+#  • Native side unchanged (same fingerprint as an existing APK) → publish an OTA update:
+#    every installed APK downloads it automatically on next launch — no reinstall.
+#  • Native side changed (new native package, icon, splash, SDK upgrade …) → build a new APK.
+# Add "[eas skip]" to a commit message to skip this workflow.
+name: Android — OTA update or new APK
+
+on:
+  push:
+    branches: ['main']
+
+jobs:
+  fingerprint:
+    name: Fingerprint
+    type: fingerprint
+    environment: production
+
+  get_android_build:
+    name: Find APK with this fingerprint
+    needs: [fingerprint]
+    type: get-build
+    params:
+      platform: android
+      profile: production
+      fingerprint_hash: ${{ needs.fingerprint.outputs.android_fingerprint_hash }}
+
+  build_android:
+    name: Build new APK
+    needs: [get_android_build]
+    if: ${{ !needs.get_android_build.outputs.build_id }}
+    type: build
+    environment: production
+    params:
+      platform: android
+      profile: production
+
+  publish_android_update:
+    name: Publish OTA update
+    needs: [get_android_build]
+    if: ${{ needs.get_android_build.outputs.build_id }}
+    type: update
+    environment: production
+    params:
+      platform: android
+      branch: production

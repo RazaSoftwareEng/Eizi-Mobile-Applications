@@ -22,7 +22,7 @@ const isRole = (v: unknown): v is Role => v === 'customer' || v === 'provider';
  * see the role picker after signing in.
  */
 async function fetchProfile(userId: string, meta?: Record<string, unknown>): Promise<Profile | null> {
-  const { data } = await supabase.from('profiles').select('id, full_name, phone, role').eq('id', userId).maybeSingle();
+  const { data } = await supabase.from('profiles').select('id, full_name, phone, role, avatar_url, bio').eq('id', userId).maybeSingle();
   const profile = (data as Profile | null) ?? null;
   const metaRole = meta?.role;
 
@@ -35,7 +35,7 @@ async function fetchProfile(userId: string, meta?: Record<string, unknown>): Pro
         full_name: profile?.full_name || (typeof meta?.full_name === 'string' ? meta.full_name : ''),
         phone: profile?.phone ?? (typeof meta?.phone === 'string' ? meta.phone : null),
       })
-      .select('id, full_name, phone, role')
+      .select('id, full_name, phone, role, avatar_url, bio')
       .single();
     return (fixed as Profile | null) ?? profile;
   }

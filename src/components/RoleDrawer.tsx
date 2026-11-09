@@ -157,7 +157,7 @@ function SideMenu({ navigation, role, items }: DrawerContentComponentProps & { r
       <View className="overflow-hidden bg-brand-800 px-5 pb-6" style={{ paddingTop: insets.top + 20 }}>
         <View className="absolute -right-16 -top-12 h-48 w-48 rounded-full bg-white/5" />
         <View className="rounded-full self-start border-4 border-white/15">
-          <Avatar name={name} size={60} light />
+          <Avatar name={name} size={60} light uri={profile?.avatar_url} />
         </View>
         <Text className="mt-3 text-lg font-bold text-white" numberOfLines={1}>
           {name}

@@ -201,12 +201,14 @@ export function ErrorBanner({ message, onRetry }: { message: string; onRetry?: (
   )
 }
 
-export function Avatar({ name, size = 'md' }: { name: string | null | undefined; size?: 'sm' | 'md' }) {
+export function Avatar({ name, size = 'md', src }: { name: string | null | undefined; size?: 'sm' | 'md' | 'lg'; src?: string | null }) {
+  const dims = size === 'lg' ? 'size-16 text-lg' : size === 'md' ? 'size-9 text-xs' : 'size-7 text-[11px]'
+  if (src) return <img src={src} alt='' loading='lazy' className={cx('shrink-0 rounded-full bg-brand-50 object-cover', dims)} />
   return (
     <span
       className={cx(
         'inline-flex shrink-0 items-center justify-center rounded-full bg-brand-50 font-bold text-brand-700',
-        size === 'md' ? 'size-9 text-xs' : 'size-7 text-[11px]',
+        dims,
       )}
     >
       {initials(name)}

@@ -21,6 +21,7 @@ import {
   Table,
   Tabs,
   Td,
+  TextArea,
   TextField,
   Th,
 } from '../components/ui'
@@ -33,7 +34,7 @@ type Filter = 'all' | 'today' | 'customer' | 'provider' | 'none'
 
 async function loadUsers(): Promise<UserRow[]> {
   const [profiles, accounts] = await Promise.all([
-    supabase.from('profiles').select('id, full_name, phone, role, created_at').order('created_at', { ascending: false }).then((r) => must(r) as Profile[]),
+    supabase.from('profiles').select('id, full_name, phone, role, created_at, avatar_url, bio').order('created_at', { ascending: false }).then((r) => must(r) as Profile[]),
     supabase.rpc('admin_list_accounts').then((r) => must(r) as Account[]),
   ])
   const byId = new Map(accounts.map((a) => [a.id, a]))
@@ -145,7 +146,7 @@ export function Users() {
               <tr key={u.id} className="transition hover:bg-slate-50/70">
                 <Td>
                   <div className="flex items-center gap-3">
-                    <Avatar name={u.full_name || u.email} />
+                    <Avatar name={u.full_name || u.email} src={u.avatar_url} />
                     <div className="min-w-0">
                       <p className="flex items-center gap-2 font-semibold">
                         <span className="truncate">{u.full_name || 'No name'}</span>
@@ -232,16 +233,25 @@ function EditUser({ user, onClose, onSaved }: { user: UserRow; onClose: () => vo
   const [name, setName] = useState(user.full_name)
   const [phone, setPhone] = useState(user.phone ?? '')
   const [role, setRole] = useState<Role | ''>(user.role ?? '')
+  const [bio, setBio] = useState(user.bio ?? '')
+  const [removePhoto, setRemovePhoto] = useState(false)
+  const bioWords = bio.trim() ? bio.trim().split(/s+/).length : 0
   const [busy, setBusy] = useState(false)
 
   async function save() {
     setBusy(true)
     const { error } = await supabase
       .from('profiles')
-      .update({ full_name: name.trim(), phone: phone.trim() || null, role: role || null })
+      .update({ full_name: name.trim(), phone: phone.trim() || null, role: role || null, bio: bio.trim(), ...(removePhoto ? { avatar_url: null } : {}) })
       .eq('id', user.id)
+    if (!error && removePhoto && user.avatar_url) {
+      // best effort: delete the file too (admins may delete in the avatars bucket)
+      const marker = '/storage/v1/object/public/avatars/'
+      const i = user.avatar_url.indexOf(marker)
+      if (i >= 0) await supabase.storage.from('avatars').remove([decodeURIComponent(user.avatar_url.slice(i + marker.length))])
+    }
     setBusy(false)
-    if (error) return toast.error(error.message)
+    if (error) return toast.error(error.message.includes('profiles_bio_500_words') ? 'Bio must be 500 words or fewer.' : error.message)
     toast.success('User updated')
     onSaved()
   }
@@ -267,6 +277,15 @@ function EditUser({ user, onClose, onSaved }: { user: UserRow; onClose: () => vo
         <TextField label="Full name" value={name} onChange={(e) => setName(e.target.value)} />
         <TextField label="Phone" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="03xx xxxxxxx" />
         <RoleSelect value={role} onChange={setRole} />
+        <TextArea label={`Bio (${bioWords}/500 words)`} value={bio} onChange={(e) => setBio(e.target.value)} placeholder="No bio yet" />
+        {user.avatar_url ? (
+          <label className="flex cursor-pointer items-center gap-3 rounded-xl bg-slate-50 p-3">
+            <Avatar name={user.full_name} src={user.avatar_url} size="lg" />
+            <span className="flex-1 text-sm text-slate-600">Profile photo</span>
+            <input type="checkbox" checked={removePhoto} onChange={(e) => setRemovePhoto(e.target.checked)} className="size-4 accent-red-600" />
+            <span className="text-sm font-semibold text-red-600">Remove</span>
+          </label>
+        ) : null}
       </div>
     </Modal>
   )

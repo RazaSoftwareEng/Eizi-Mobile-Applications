@@ -15,7 +15,7 @@ export function Login() {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
-  if (session && isAdmin) return <Navigate to="/" replace />
+  if (session && isAdmin) return <Navigate to="/admin" replace />
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault()

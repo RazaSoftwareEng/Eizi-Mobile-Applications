@@ -32,7 +32,7 @@ export default function ProviderRequests() {
     if (!session) return;
     const { data, error } = await supabase
       .from('bookings')
-      .select(`${BOOKING_SELECT}, person:profiles!bookings_customer_id_fkey(full_name, phone)`)
+      .select(`${BOOKING_SELECT}, person:profiles!bookings_customer_id_fkey(full_name, phone, avatar_url)`)
       .eq('provider_id', session.user.id)
       .order('scheduled_at', { ascending: true });
     if (error) Alert.alert('Could not load requests', error.message);

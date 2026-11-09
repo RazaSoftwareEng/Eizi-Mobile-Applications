@@ -6,6 +6,8 @@ export type Profile = {
   full_name: string;
   phone: string | null;
   role: Role | null;
+  avatar_url?: string | null;
+  bio?: string;
 };
 
 export type Service = {

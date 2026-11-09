@@ -4,6 +4,7 @@ import { setStatusBarStyle } from 'expo-status-bar';
 import { useCallback, useState, type ComponentProps, type ReactNode } from 'react';
 import {
   ActivityIndicator,
+  Image,
   Pressable,
   Text,
   TextInput,
@@ -215,7 +216,16 @@ export function EmptyState({ icon, title, subtitle, children }: {
 
 /* --------------------------------------------------------------- Pieces */
 
-export function Avatar({ name, size = 48, light }: { name: string; size?: number; light?: boolean }) {
+export function Avatar({ name, size = 48, light, uri }: { name: string; size?: number; light?: boolean; uri?: string | null }) {
+  if (uri) {
+    return (
+      <Image
+        source={{ uri }}
+        style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: light ? 'rgba(255,255,255,0.2)' : colors.brandSoft }}
+        accessibilityLabel={`${name || 'User'} photo`}
+      />
+    );
+  }
   return (
     <View
       className={`items-center justify-center rounded-full ${light ? 'bg-white/20' : 'bg-brand-50'}`}

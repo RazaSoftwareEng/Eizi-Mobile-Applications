@@ -17,6 +17,8 @@ export type Profile = {
   phone: string | null
   role: Role | null
   created_at: string
+  avatar_url?: string | null
+  bio?: string
 }
 
 export type Account = {
@@ -62,6 +64,8 @@ export type Booking = {
   address: string
   notes: string
   status: BookingStatus
+  payment_method: 'cash' | 'wallet'
+  payment_status: 'unpaid' | 'held' | 'released' | 'refunded'
   created_at: string
   customer: { full_name: string; phone: string | null } | null
   provider: { full_name: string; phone: string | null } | null

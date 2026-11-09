@@ -157,26 +157,26 @@ export function Dashboard() {
         <div className={`space-y-6 transition-opacity ${loading ? 'opacity-60' : ''}`}>
           {/* KPI tiles */}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            <Kpi icon={UserPlus} tone="blue" label="New users" value={String(data.kpi.users[0])} delta={data.kpi.users} period={days} to="/users" />
-            <Kpi icon={CalendarCheck} tone="brand" label="Bookings made" value={String(data.kpi.bookings[0])} delta={data.kpi.bookings} period={days} to="/bookings" />
+            <Kpi icon={UserPlus} tone="blue" label="New users" value={String(data.kpi.users[0])} delta={data.kpi.users} period={days} to="/admin/users" />
+            <Kpi icon={CalendarCheck} tone="brand" label="Bookings made" value={String(data.kpi.bookings[0])} delta={data.kpi.bookings} period={days} to="/admin/bookings" />
             <Kpi icon={Wallet} tone="emerald" label="Booking value" value={formatPrice(data.kpi.value[0])} delta={data.kpi.value} period={days} note="Excludes cancelled & declined" />
             <Kpi
               icon={Clock}
               tone="amber"
               label="Pending right now"
               value={String(data.totals.pending)}
-              to="/bookings"
+              to="/admin/bookings"
               note={data.totals.pending ? 'Waiting for a provider to accept' : 'All caught up'}
             />
           </div>
 
           {/* Totals strip */}
           <div className="grid grid-cols-2 overflow-hidden rounded-2xl border border-slate-200/70 bg-white shadow-card lg:grid-cols-5">
-            <Total icon={Users} label="Total users" value={data.totals.users} to="/users" />
-            <Total dot={CHART.series1} label="Customers" value={data.totals.customers} to="/users" />
-            <Total dot={CHART.series2} label="Providers" value={data.totals.providers} to="/users" />
-            <Total icon={Layers} label="Services" value={data.totals.services} to="/services" />
-            <Total icon={BriefcaseBusiness} label="Live listings" value={data.totals.listings} to="/listings" className="col-span-2 lg:col-span-1" />
+            <Total icon={Users} label="Total users" value={data.totals.users} to="/admin/users" />
+            <Total dot={CHART.series1} label="Customers" value={data.totals.customers} to="/admin/users" />
+            <Total dot={CHART.series2} label="Providers" value={data.totals.providers} to="/admin/users" />
+            <Total icon={Layers} label="Services" value={data.totals.services} to="/admin/services" />
+            <Total icon={BriefcaseBusiness} label="Live listings" value={data.totals.listings} to="/admin/listings" className="col-span-2 lg:col-span-1" />
           </div>
 
           {/* Charts */}
@@ -231,7 +231,7 @@ export function Dashboard() {
 
           {/* Activity */}
           <div className="grid gap-6 xl:grid-cols-2">
-            <Panel title="New users today" count={data.newToday.length} link="/users">
+            <Panel title="New users today" count={data.newToday.length} link="/admin/users">
               {data.newToday.length === 0 ? (
                 <EmptyState icon={UserPlus} title="No sign-ups yet today" text="New customers and providers will appear here as they join." />
               ) : (
@@ -254,7 +254,7 @@ export function Dashboard() {
               )}
             </Panel>
 
-            <Panel title="Latest bookings" link="/bookings">
+            <Panel title="Latest bookings" link="/admin/bookings">
               {data.latest.length === 0 ? (
                 <EmptyState icon={CalendarCheck} title="No recent bookings" />
               ) : (

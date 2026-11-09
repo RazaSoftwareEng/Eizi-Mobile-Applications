@@ -6,6 +6,7 @@ import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { AnimatedSplash } from '@/components/AnimatedSplash';
+import { UpdateBanner } from '@/components/UpdateBanner';
 import { colors } from '@/lib/theme';
 import { AuthProvider, useAuth } from '@/providers/AuthProvider';
 
@@ -30,8 +31,11 @@ export default function RootLayout() {
         >
           <Stack.Screen name="service/[id]" options={{ headerShown: true, title: '' }} />
           <Stack.Screen name="book/[id]" options={{ headerShown: true, title: 'Book a service' }} />
+          <Stack.Screen name="wallet/add" options={{ headerShown: true, title: 'Add money' }} />
+          <Stack.Screen name="wallet/withdraw" options={{ headerShown: true, title: 'Withdraw' }} />
           <Stack.Screen name="add-service" options={{ headerShown: true, title: 'Your service', presentation: 'modal' }} />
         </Stack>
+        <UpdateBanner />
         <Intro />
       </AuthProvider>
     </GestureHandlerRootView>

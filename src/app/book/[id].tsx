@@ -1,6 +1,6 @@
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -8,6 +8,7 @@ import { Avatar, Button, Card, Chip, EmptyState, Input, Loader, PriceRow, servic
 import { formatPrice } from '@/lib/format';
 import { supabase } from '@/lib/supabase';
 import { colors, shadow } from '@/lib/theme';
+import { fetchBalance } from '@/lib/wallet';
 import { useAuth } from '@/providers/AuthProvider';
 
 type Offer = {
@@ -15,7 +16,7 @@ type Offer = {
   hourly_rate: number;
   description: string;
   service: { name: string; icon: string } | null;
-  provider: { full_name: string } | null;
+  provider: { full_name: string; avatar_url: string | null } | null;
 };
 
 const QUICK_HOURS = [1, 2, 3, 4];
@@ -51,11 +52,20 @@ export default function BookService() {
   const [address, setAddress] = useState('');
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [payWith, setPayWith] = useState<'cash' | 'wallet'>('cash');
+  const [balance, setBalance] = useState<number | null>(null);
+
+  // Wallet balance — refreshed whenever the screen is focused (e.g. after adding money).
+  useFocusEffect(
+    useCallback(() => {
+      if (session) fetchBalance(session.user.id).then(setBalance);
+    }, [session]),
+  );
 
   useEffect(() => {
     supabase
       .from('provider_services')
-      .select('id, hourly_rate, description, service:services(name, icon), provider:profiles(full_name)')
+      .select('id, hourly_rate, description, service:services(name, icon), provider:profiles(full_name, avatar_url)')
       .eq('id', id)
       .eq('is_active', true)
       .maybeSingle()
@@ -87,6 +97,8 @@ export default function BookService() {
 
   const rate = Number(offer.hourly_rate);
   const total = rate * hours;
+  const walletShort = balance !== null && balance < total;
+  const paying = payWith === 'wallet' && walletShort ? 'cash' : payWith; // never submit a wallet payment we know will fail
   const ready = activeSlot !== null && address.trim().length > 0;
 
   async function onBook() {
@@ -111,6 +123,7 @@ export default function BookService() {
       scheduled_at: when.toISOString(),
       address: address.trim(),
       notes: notes.trim(),
+      payment_method: paying,
     });
     setSubmitting(false);
 
@@ -118,7 +131,11 @@ export default function BookService() {
       Alert.alert('Booking failed', error.message);
       return;
     }
-    Alert.alert('Booking sent', `${offer.provider?.full_name || 'The provider'} will confirm your request shortly.`);
+    Alert.alert(
+      'Booking sent',
+      `${offer.provider?.full_name || 'The provider'} will confirm your request shortly.` +
+        (paying === 'wallet' ? `\n\n${formatPrice(total)} was paid from your wallet and is held until the job is done. If it's cancelled or declined, you get it back.` : ''),
+    );
     router.dismissAll();
     router.replace('/customer/bookings');
   }
@@ -132,7 +149,7 @@ export default function BookService() {
       <ScrollView contentContainerClassName="gap-4 px-5 pb-8 pt-1" keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
         {/* Provider summary */}
         <Card className="flex-row items-center gap-3 p-4">
-          <Avatar name={offer.provider?.full_name ?? ''} size={52} />
+          <Avatar name={offer.provider?.full_name ?? ''} size={52} uri={offer.provider?.avatar_url} />
           <View className="flex-1">
             <Text className="text-base font-bold text-ink" numberOfLines={1}>
               {offer.provider?.full_name || 'Provider'}
@@ -234,6 +251,34 @@ export default function BookService() {
           </View>
         </Step>
 
+        {/* 5. Payment */}
+        <Step n={5} title="How would you like to pay?">
+          <View className="gap-3">
+            <PayOption
+              icon="cash-outline"
+              title="Pay after the job"
+              subtitle="Cash to the provider when the work is done"
+              selected={paying === 'cash'}
+              onPress={() => setPayWith('cash')}
+            />
+            <PayOption
+              icon="wallet-outline"
+              title="Pay from wallet"
+              subtitle={
+                balance === null
+                  ? 'Checking balance…'
+                  : walletShort
+                    ? `Balance ${formatPrice(balance)} — add ${formatPrice(total - balance)} more`
+                    : `Balance ${formatPrice(balance)} · held safely until the job is done`
+              }
+              selected={paying === 'wallet'}
+              disabled={walletShort || balance === null}
+              onPress={() => setPayWith('wallet')}
+              action={walletShort ? { label: 'Add money', onPress: () => router.push('/wallet/add') } : undefined}
+            />
+          </View>
+        </Step>
+
         {/* Summary */}
         <Card className="p-5">
           <Text className="mb-2 text-base font-bold text-ink">Price details</Text>
@@ -242,7 +287,11 @@ export default function BookService() {
           <PriceRow label="Total" value={total} bold />
           <View className="mt-3 flex-row items-center gap-2 rounded-xl bg-brand-50 p-3">
             <Ionicons name="shield-checkmark-outline" size={18} color={colors.brand} />
-            <Text className="flex-1 text-[13px] text-brand-800">Pay the provider after the job is done. Free cancellation before it starts.</Text>
+            <Text className="flex-1 text-[13px] text-brand-800">
+              {paying === 'wallet'
+                ? 'Paid now from your wallet, released to the pro only after the job. Cancel before it starts for an instant refund.'
+                : 'Pay the provider after the job is done. Free cancellation before it starts.'}
+            </Text>
           </View>
         </Card>
       </ScrollView>
@@ -259,7 +308,7 @@ export default function BookService() {
           <Text className="text-2xl font-bold text-ink">{formatPrice(total)}</Text>
         </View>
         <Button
-          title={ready ? 'Confirm booking' : activeSlot === null ? 'Pick a time' : 'Add address'}
+          title={ready ? (paying === 'wallet' ? 'Pay & book' : 'Confirm booking') : activeSlot === null ? 'Pick a time' : 'Add address'}
           onPress={onBook}
           loading={submitting}
           disabled={!ready}
@@ -267,6 +316,41 @@ export default function BookService() {
         />
       </View>
     </KeyboardAvoidingView>
+  );
+}
+
+function PayOption({ icon, title, subtitle, selected, disabled, onPress, action }: {
+  icon: 'cash-outline' | 'wallet-outline';
+  title: string;
+  subtitle: string;
+  selected: boolean;
+  disabled?: boolean;
+  onPress: () => void;
+  action?: { label: string; onPress: () => void };
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      accessibilityRole="radio"
+      accessibilityState={{ checked: selected, disabled }}
+      className={`flex-row items-center gap-3 rounded-2xl border-2 p-3.5 ${selected ? 'border-brand-600 bg-brand-50' : 'border-line bg-white'}`}
+    >
+      <View className={`h-11 w-11 items-center justify-center rounded-xl ${selected ? 'bg-brand-700' : 'bg-slate-100'}`}>
+        <Ionicons name={icon} size={22} color={selected ? colors.white : disabled ? colors.subtle : colors.muted} />
+      </View>
+      <View className="flex-1">
+        <Text className={`text-[15px] font-bold ${disabled ? 'text-slate-400' : 'text-ink'}`}>{title}</Text>
+        <Text className="text-xs text-slate-500">{subtitle}</Text>
+      </View>
+      {action ? (
+        <Pressable onPress={action.onPress} hitSlop={8} className="rounded-xl bg-brand-700 px-3 py-2 active:opacity-80">
+          <Text className="text-xs font-bold text-white">{action.label}</Text>
+        </Pressable>
+      ) : (
+        <Ionicons name={selected ? 'radio-button-on' : 'radio-button-off'} size={22} color={selected ? colors.brand : colors.line} />
+      )}
+    </Pressable>
   );
 }
 

@@ -4,6 +4,7 @@ import { Alert, FlatList, RefreshControl, View } from 'react-native';
 
 import { BOOKING_SELECT, BookingCard, type BookingRow } from '@/components/BookingCard';
 import { Button, EmptyState, Loader, ScreenHeader, Segmented } from '@/components/ui';
+import { formatPrice } from '@/lib/format';
 import { supabase } from '@/lib/supabase';
 import { colors } from '@/lib/theme';
 import { useAuth } from '@/providers/AuthProvider';
@@ -23,7 +24,7 @@ export default function CustomerBookings() {
     if (!session) return;
     const { data, error } = await supabase
       .from('bookings')
-      .select(`${BOOKING_SELECT}, person:profiles!bookings_provider_id_fkey(full_name, phone)`)
+      .select(`${BOOKING_SELECT}, person:profiles!bookings_provider_id_fkey(full_name, phone, avatar_url)`)
       .eq('customer_id', session.user.id)
       .order('scheduled_at', { ascending: false });
     if (error) Alert.alert('Could not load bookings', error.message);
@@ -41,7 +42,9 @@ export default function CustomerBookings() {
   const visible = tab === 'active' ? active : past;
 
   function confirmCancel(id: number) {
-    Alert.alert('Cancel this booking?', 'The provider will see that you cancelled.', [
+    const b = bookings.find((x) => x.id === id);
+    const refund = b?.payment_status === 'held' ? `\n\n${formatPrice(b.total_price)} will be refunded to your wallet right away.` : '';
+    Alert.alert('Cancel this booking?', `The provider will see that you cancelled.${refund}`, [
       { text: 'Keep booking', style: 'cancel' },
       {
         text: 'Yes, cancel',

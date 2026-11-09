@@ -65,6 +65,10 @@ src/
 supabase/schema.sql       database, RLS policies, triggers, seed data
 ```
 
+## Public website + admin portal
+
+One web app in [`admin/`](admin/): the public website (`/`, `/about`, `/contact`) and the admin portal (`/admin`). See [admin/README.md](admin/README.md).
+
 ## Admin portal
 
 The web admin portal is in [`admin/`](admin/) — see [admin/README.md](admin/README.md) for setup and how to make yourself an admin.
@@ -84,3 +88,34 @@ The web admin portal is in [`admin/`](admin/) — see [admin/README.md](admin/RE
 - Ratings & reviews, provider photos/ID verification
 - Realtime updates on the Requests screen (`supabase.channel(...)`)
 - Map/location picker for the address
+
+## Automatic APK builds & live updates (EAS)
+
+Every push to `main` runs [.eas/workflows/deploy-android.yml](.eas/workflows/deploy-android.yml) on Expo's servers:
+
+| What changed | What happens | Installed APKs |
+| --- | --- | --- |
+| JS / UI only (screens, styles, logic, text) | an **OTA update** is published to the `production` channel | download it automatically on next launch; a "New version ready · Restart" banner lets users apply it immediately |
+| Native side (new native package, icon/splash, permissions, Expo SDK upgrade) | a **new APK** is built (`production` profile) | download & install the new APK once (link on expo.dev) |
+
+Decided by the app's **fingerprint** (`runtimeVersion.policy = "fingerprint"`), so an OTA update is never sent to an APK it would break.
+Add `[eas skip]` to a commit message to skip the workflow.
+
+### One-time setup
+
+```bash
+npx eas-cli@latest login               # your Expo account
+npx eas-cli@latest init                # creates the EAS project, adds extra.eas.projectId to app.json
+npx eas-cli@latest update:configure    # adds updates.url to app.json
+```
+
+Add the Supabase variables to EAS (cloud builds don't see your local `.env`):
+
+```bash
+npx eas-cli@latest env:create --environment production --name EXPO_PUBLIC_SUPABASE_URL --value "https://<ref>.supabase.co" --visibility plaintext
+npx eas-cli@latest env:create --environment production --name EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY --value "<publishable key>" --visibility plaintext
+```
+
+Then on **expo.dev → your project → GitHub**, install the Expo GitHub app and link this repository. Commit the `app.json` changes and push to `main` — the first push builds the first APK.
+
+Manual commands: `npx eas-cli@latest build -p android --profile production` (APK) · `npx eas-cli@latest update --channel production --environment production -m "message"` (OTA).

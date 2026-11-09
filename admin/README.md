@@ -1,4 +1,20 @@
-# Eizi Admin Portal
+# Eizi Web — public website + admin portal
+
+One Vite app, one deploy:
+
+| URL | What |
+| --- | --- |
+| `/` · `/about` · `/contact` | Public website (Home with the interactive app tour, About, Contact form) |
+| `/admin/login` | Admin sign in |
+| `/admin/…` | Admin portal — Dashboard, Users, Services, Listings, Bookings, Wallet, Messages |
+
+Website source lives in `src/site/`; admin pages in `src/pages/`. `/admin` is hidden from search engines (`noindex`).
+
+## Website settings (optional)
+
+`VITE_APK_URL` (download button link), `VITE_CONTACT_PHONE`, `VITE_WHATSAPP` (e.g. `923003209005`), `VITE_CONTACT_EMAIL` — see `.env.example`. Contact-form messages appear in **Admin → Messages**.
+
+## Admin portal
 
 Web dashboard for Eizi administrators — React + Vite + Tailwind CSS v4 + Supabase (the same backend as the mobile app).
 
@@ -35,7 +51,7 @@ Only accounts listed in the `public.admins` table can sign in. Everyone else is 
 
    ```bash
    npm install
-   npm run dev      # http://localhost:5173
+   npm run dev      # website: http://localhost:5173  ·  admin: http://localhost:5173/admin
    npm run build    # production build in dist/
    ```
 

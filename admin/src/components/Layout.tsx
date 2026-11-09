@@ -6,7 +6,9 @@ import {
   LogOut,
   Menu,
   ShieldCheck,
+  Inbox,
   Users,
+  Wallet,
   X,
   type LucideIcon,
 } from 'lucide-react'
@@ -17,11 +19,13 @@ import { useAuth } from '../auth/AuthProvider'
 import { Avatar } from './ui'
 
 const NAV: { to: string; label: string; icon: LucideIcon; hint: string }[] = [
-  { to: '/', label: 'Dashboard', icon: LayoutDashboard, hint: 'Today at a glance' },
-  { to: '/users', label: 'Users', icon: Users, hint: 'Customers & providers' },
-  { to: '/services', label: 'Services', icon: Layers, hint: 'Categories' },
-  { to: '/listings', label: 'Provider listings', icon: BriefcaseBusiness, hint: 'Who offers what' },
-  { to: '/bookings', label: 'Bookings', icon: CalendarCheck, hint: 'All orders' },
+  { to: '/admin', label: 'Dashboard', icon: LayoutDashboard, hint: 'Today at a glance' },
+  { to: '/admin/users', label: 'Users', icon: Users, hint: 'Customers & providers' },
+  { to: '/admin/services', label: 'Services', icon: Layers, hint: 'Categories' },
+  { to: '/admin/listings', label: 'Provider listings', icon: BriefcaseBusiness, hint: 'Who offers what' },
+  { to: '/admin/bookings', label: 'Bookings', icon: CalendarCheck, hint: 'All orders' },
+  { to: '/admin/wallet', label: 'Wallet', icon: Wallet, hint: 'Top-ups, withdrawals & balances' },
+  { to: '/admin/messages', label: 'Messages', icon: Inbox, hint: 'From the website contact form' },
 ]
 
 export function Layout() {
@@ -31,7 +35,7 @@ export function Layout() {
     new Date().toLocaleDateString('en-PK', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }),
   )
   const { pathname } = useLocation()
-  const current = NAV.find((n) => (n.to === '/' ? pathname === '/' : pathname.startsWith(n.to)))
+  const current = NAV.find((n) => (n.to === '/admin' ? pathname === '/admin' : pathname.startsWith(n.to)))
   const email = session?.user.email ?? ''
 
   const sidebar = (
@@ -46,13 +50,13 @@ export function Layout() {
         </div>
       </div>
 
-      <nav className="flex-1 space-y-1 px-3 py-2">
+      <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto px-3 py-2">
         <p className="px-3 pb-2 text-[11px] font-bold tracking-widest text-brand-400/80 uppercase">Manage</p>
         {NAV.map(({ to, label, icon: Icon }) => (
           <NavLink
             key={to}
             to={to}
-            end={to === '/'}
+            end={to === '/admin'}
             onClick={() => setOpen(false)}
             className={({ isActive }) =>
               [
@@ -97,9 +101,9 @@ export function Layout() {
   )
 
   return (
-    <div className="flex h-full">
-      {/* Desktop sidebar */}
-      <aside className="hidden w-64 shrink-0 lg:block">{sidebar}</aside>
+    <div className="flex min-h-full">
+      {/* Desktop sidebar — sticks to the viewport while the page scrolls */}
+      <aside className="sticky top-0 hidden h-screen w-64 shrink-0 lg:block">{sidebar}</aside>
 
       {/* Mobile drawer */}
       {open ? (
@@ -139,7 +143,7 @@ export function Layout() {
           </span>
         </header>
 
-        <main className="flex-1 overflow-y-auto">
+        <main className="flex-1">
           <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
             <Outlet />
           </div>
