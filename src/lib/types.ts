@@ -38,6 +38,8 @@ export type Booking = {
   total_price: number;
   scheduled_at: string;
   address: string;
+  latitude: number | null;
+  longitude: number | null;
   notes: string;
   status: BookingStatus;
   created_at: string;

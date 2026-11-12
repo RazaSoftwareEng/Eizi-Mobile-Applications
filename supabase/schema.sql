@@ -145,6 +145,18 @@ do $$ begin
   alter table public.bookings add constraint bookings_payment_status_check check (payment_status in ('unpaid', 'held', 'released', 'refunded'));
 exception when duplicate_object then null; end $$;
 
+-- Exact spot the customer shared from their phone's GPS (optional). Visible only to that booking's
+-- customer, provider and admins (same RLS as the rest of the row) — the provider opens it in Google Maps.
+alter table public.bookings add column if not exists latitude double precision;
+alter table public.bookings add column if not exists longitude double precision;
+do $$ begin
+  alter table public.bookings add constraint bookings_location_check check (
+    (latitude is null and longitude is null) or
+    (latitude is not null and longitude is not null
+      and latitude between -90 and 90 and longitude between -180 and 180)
+  );
+exception when duplicate_object then null; end $$;
+
 create table if not exists public.wallets (
   user_id     uuid primary key references public.profiles (id) on delete cascade,
   balance     numeric(12, 2) not null default 0 check (balance >= 0),
@@ -304,11 +316,11 @@ begin
   else
     if (new.customer_id, new.provider_id, new.provider_service_id, new.service_id, new.hours,
         new.hourly_rate, new.total_price, new.scheduled_at, new.address, new.notes, new.created_at,
-        new.payment_method, new.payment_status)
+        new.payment_method, new.payment_status, new.latitude, new.longitude)
        is distinct from
        (old.customer_id, old.provider_id, old.provider_service_id, old.service_id, old.hours,
         old.hourly_rate, old.total_price, old.scheduled_at, old.address, old.notes, old.created_at,
-        old.payment_method, old.payment_status)
+        old.payment_method, old.payment_status, old.latitude, old.longitude)
     then
       raise exception 'Only the booking status can be changed';
     end if;
@@ -724,3 +736,240 @@ create policy "admins manage messages" on public.contact_messages
 revoke all on public.contact_messages from anon;
 grant insert (name, contact, topic, message) on public.contact_messages to anon, authenticated;
 grant select, update, delete on public.contact_messages to authenticated;   -- RLS: admins only
+
+-- =====================================================================
+-- Push notifications (Expo push service, sent straight from the database)
+-- =====================================================================
+--   app signs in → register_push_token()  → push_tokens
+--   booking inserted / status changes, wallet request reviewed → trigger → notify_user()
+--   notify_user() → pg_net HTTP POST → https://exp.host/--/api/v2/push/send → phone (sound: booking.wav)
+-- pg_net queues the request and sends it after the transaction commits, so a slow or failed push
+-- never delays or breaks the booking itself.
+do $$ begin
+  create extension if not exists pg_net;
+exception when others then
+  raise notice 'pg_net not available, push notifications are disabled (%).', sqlerrm;
+end $$;
+
+create table if not exists public.push_tokens (
+  token       text primary key check (token ~ '^Expo(nent)?PushToken\[[A-Za-z0-9_-]+\]$'),
+  user_id     uuid not null references public.profiles (id) on delete cascade,
+  platform    text not null default '' check (platform in ('', 'android', 'ios')),
+  updated_at  timestamptz not null default now()
+);
+create index if not exists push_tokens_user_idx on public.push_tokens (user_id);
+
+-- Apps never touch the table directly, only through the two functions below.
+alter table public.push_tokens enable row level security;
+revoke all on public.push_tokens from anon, authenticated;
+
+-- Link this phone to the signed-in user (moves it over if another account used the phone before).
+create or replace function public.register_push_token(p_token text, p_platform text default '')
+returns void
+language plpgsql
+security definer set search_path = ''
+as $$
+begin
+  if auth.uid() is null then
+    raise exception 'Not signed in';
+  end if;
+  insert into public.push_tokens (token, user_id, platform, updated_at)
+  values (p_token, auth.uid(), coalesce(p_platform, ''), now())
+  on conflict (token) do update set user_id = excluded.user_id, platform = excluded.platform, updated_at = now();
+  -- keep at most 5 phones per user
+  delete from public.push_tokens
+  where user_id = auth.uid()
+    and token not in (select token from public.push_tokens where user_id = auth.uid() order by updated_at desc limit 5);
+end;
+$$;
+
+create or replace function public.unregister_push_token(p_token text)
+returns void
+language sql
+security definer set search_path = ''
+as $$
+  delete from public.push_tokens where token = p_token and user_id = auth.uid();
+$$;
+
+revoke all on function public.register_push_token(text, text) from public, anon;
+revoke all on function public.unregister_push_token(text) from public, anon;
+grant execute on function public.register_push_token(text, text) to authenticated;
+grant execute on function public.unregister_push_token(text) to authenticated;
+
+-- Send one notification to every phone of a user. Internal only (not callable from the apps).
+-- p_kind picks the Android channel + sound (must match src/lib/notifications.ts and app.json):
+--   'booking'   → channel "bookings",      booking.wav   (requests, updates, wallet)
+--   'confirmed' → channel "confirmations", confirmed.wav (cheerful chime when a booking is accepted)
+drop function if exists public.notify_user(uuid, text, text, jsonb);
+create or replace function public.notify_user(p_user uuid, p_title text, p_body text, p_data jsonb default '{}', p_kind text default 'booking')
+returns void
+language plpgsql
+security definer set search_path = ''
+as $$
+declare
+  msgs jsonb;
+begin
+  select jsonb_agg(jsonb_build_object(
+           'to', t.token,
+           'title', p_title,
+           'body', p_body,
+           'data', coalesce(p_data, '{}'::jsonb),
+           'sound', case when p_kind = 'confirmed' then 'confirmed.wav' else 'booking.wav' end,  -- iOS; Android uses the channel's sound
+           'channelId', case when p_kind = 'confirmed' then 'confirmations' else 'bookings' end,
+           'priority', 'high'))
+    into msgs
+  from public.push_tokens t
+  where t.user_id = p_user;
+
+  if msgs is null then
+    return;
+  end if;
+
+  begin
+    perform net.http_post(
+      url     := 'https://exp.host/--/api/v2/push/send',
+      body    := msgs,
+      headers := '{"Content-Type": "application/json", "Accept": "application/json"}'::jsonb
+    );
+  exception when others then
+    raise warning 'push notification not sent: %', sqlerrm;   -- never block the booking
+  end;
+end;
+$$;
+revoke all on function public.notify_user(uuid, text, text, jsonb, text) from public, anon, authenticated;
+
+create or replace function public.eizi_when(ts timestamptz)
+returns text
+language sql
+immutable
+set search_path = ''
+as $$ select to_char(ts at time zone 'Asia/Karachi', 'Dy DD Mon, HH12:MI AM') $$;
+
+create or replace function public.eizi_rs(amount numeric)
+returns text
+language sql
+immutable
+set search_path = ''
+as $$ select 'Rs ' || to_char(round(amount), 'FM999,999,999,990') $$;
+
+-- New booking → provider.  Status change → whoever didn't make the change.
+create or replace function public.bookings_notify()
+returns trigger
+language plpgsql
+security definer set search_path = ''
+as $$
+declare
+  svc  text;
+  cust text;
+  prov text;
+  first text;
+begin
+  select name into svc from public.services where id = new.service_id;
+  select coalesce(nullif(full_name, ''), 'A customer') into cust from public.profiles where id = new.customer_id;
+  select coalesce(nullif(full_name, ''), 'Your provider') into prov from public.profiles where id = new.provider_id;
+  svc := coalesce(svc, 'a service');
+  select split_part(btrim(coalesce(full_name, '')), ' ', 1) into first from public.profiles where id = new.customer_id;
+
+  if tg_op = 'INSERT' then
+    perform public.notify_user(new.provider_id, 'New booking request',
+      cust || ' booked ' || svc || ' · ' || new.hours || ' hr · ' || public.eizi_when(new.scheduled_at)
+        || case when new.payment_method = 'wallet' then ' · prepaid ' || public.eizi_rs(new.total_price) else '' end,
+      jsonb_build_object('url', '/provider', 'booking_id', new.id));
+    return new;
+  end if;
+
+  if new.status is not distinct from old.status then
+    return new;
+  end if;
+
+  case new.status
+    when 'accepted' then
+      -- The moment that builds trust: who is coming, when, and that the money is safe.
+      perform public.notify_user(new.customer_id,
+        case when coalesce(first, '') <> '' then 'Great news, ' || first || '! Your booking is confirmed' else 'Great news! Your booking is confirmed' end,
+        prov || ' will be there on ' || public.eizi_when(new.scheduled_at) || ' for ' || svc || ' (' || new.hours || ' hr). '
+          || case when new.payment_status = 'held'
+                  then 'Your ' || public.eizi_rs(new.total_price) || ' stays safe with Eizi until the job is done.'
+                  else 'Pay ' || public.eizi_rs(new.total_price) || ' only after the work is done.' end
+          || ' Tap to see details or call them.',
+        jsonb_build_object('url', '/customer/bookings', 'booking_id', new.id),
+        'confirmed');
+    when 'rejected' then
+      perform public.notify_user(new.customer_id, 'Booking declined',
+        prov || ' can' || chr(39) || 't take your ' || svc || ' booking.'
+          || case when new.payment_status = 'refunded' then ' ' || public.eizi_rs(new.total_price) || ' is back in your wallet.' else ' Try another provider.' end,
+        jsonb_build_object('url', '/customer/bookings', 'booking_id', new.id));
+    when 'completed' then
+      perform public.notify_user(new.customer_id, 'Job completed',
+        'Your ' || svc || ' booking is done. Thanks for using Eizi!',
+        jsonb_build_object('url', '/customer/bookings', 'booking_id', new.id));
+      if new.payment_status = 'released' then
+        perform public.notify_user(new.provider_id, 'Payment received',
+          public.eizi_rs(new.total_price) || ' for booking #' || new.id || ' was added to your wallet.',
+          jsonb_build_object('url', '/provider/wallet', 'booking_id', new.id));
+      end if;
+    when 'cancelled' then
+      if auth.uid() is distinct from new.provider_id then
+        perform public.notify_user(new.provider_id, 'Booking cancelled',
+          cust || ' cancelled ' || svc || ' on ' || public.eizi_when(new.scheduled_at) || '.',
+          jsonb_build_object('url', '/provider', 'booking_id', new.id));
+      end if;
+      if auth.uid() is distinct from new.customer_id then
+        perform public.notify_user(new.customer_id, 'Booking cancelled',
+          'Your ' || svc || ' booking was cancelled.'
+            || case when new.payment_status = 'refunded' then ' ' || public.eizi_rs(new.total_price) || ' is back in your wallet.' else '' end,
+          jsonb_build_object('url', '/customer/bookings', 'booking_id', new.id));
+      end if;
+    else
+      null;
+  end case;
+  return new;
+end;
+$$;
+revoke all on function public.bookings_notify() from public, anon, authenticated;
+
+drop trigger if exists bookings_notify_insert on public.bookings;
+create trigger bookings_notify_insert
+  after insert on public.bookings
+  for each row execute function public.bookings_notify();
+
+drop trigger if exists bookings_notify_status on public.bookings;
+create trigger bookings_notify_status
+  after update of status on public.bookings
+  for each row execute function public.bookings_notify();
+
+-- Admin approved / rejected a top-up or withdrawal → tell the user.
+create or replace function public.wallet_requests_notify()
+returns trigger
+language plpgsql
+security definer set search_path = ''
+as $$
+declare
+  dest text;
+begin
+  if new.status is not distinct from old.status or new.status = 'pending' then
+    return new;
+  end if;
+  select case when role = 'provider' then '/provider/wallet' else '/customer/wallet' end
+    into dest from public.profiles where id = new.user_id;
+
+  perform public.notify_user(new.user_id,
+    case when new.kind = 'topup' then
+      case when new.status = 'approved' then 'Money added' else 'Top-up not approved' end
+    else
+      case when new.status = 'approved' then 'Withdrawal sent' else 'Withdrawal not approved' end
+    end,
+    case when new.kind = 'topup' and new.status = 'approved' then public.eizi_rs(new.amount) || ' is now in your Eizi wallet.'
+         when new.kind = 'withdraw' and new.status = 'approved' then public.eizi_rs(new.amount) || ' was sent to your ' || new.method || ' account.'
+         else coalesce(nullif(new.admin_note, ''), 'Open your wallet for details.')
+    end,
+    jsonb_build_object('url', coalesce(dest, '/customer/wallet')));
+  return new;
+end;
+$$;
+revoke all on function public.wallet_requests_notify() from public, anon, authenticated;
+
+drop trigger if exists wallet_requests_notify on public.wallet_requests;
+create trigger wallet_requests_notify
+  after update of status on public.wallet_requests
+  for each row execute function public.wallet_requests_notify();

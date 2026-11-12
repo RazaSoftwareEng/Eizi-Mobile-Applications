@@ -6,6 +6,7 @@ import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { AnimatedSplash } from '@/components/AnimatedSplash';
+import { PushNotifications } from '@/components/PushNotifications';
 import { UpdateBanner } from '@/components/UpdateBanner';
 import { colors } from '@/lib/theme';
 import { AuthProvider, useAuth } from '@/providers/AuthProvider';
@@ -36,6 +37,7 @@ export default function RootLayout() {
           <Stack.Screen name="add-service" options={{ headerShown: true, title: 'Your service', presentation: 'modal' }} />
         </Stack>
         <UpdateBanner />
+        <PushNotifications />
         <Intro />
       </AuthProvider>
     </GestureHandlerRootView>

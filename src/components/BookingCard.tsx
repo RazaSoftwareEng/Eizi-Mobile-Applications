@@ -4,6 +4,7 @@ import { Linking, Pressable, Text, View } from 'react-native';
 
 import { Avatar, Card, ServiceIcon, StatusBadge, type IconName } from '@/components/ui';
 import { formatDateTime, formatPrice } from '@/lib/format';
+import { hasCoords, openDirections, openInMaps, type Coords } from '@/lib/location';
 import { colors } from '@/lib/theme';
 import type { BookingStatus } from '@/lib/types';
 
@@ -15,6 +16,8 @@ export type BookingRow = {
   total_price: number;
   scheduled_at: string;
   address: string;
+  latitude: number | null;
+  longitude: number | null;
   notes: string;
   status: BookingStatus;
   payment_method: 'cash' | 'wallet';
@@ -25,7 +28,7 @@ export type BookingRow = {
 };
 
 export const BOOKING_SELECT =
-  'id, service_id, hours, hourly_rate, total_price, scheduled_at, address, notes, status, payment_method, payment_status, service:services(name, icon)';
+  'id, service_id, hours, hourly_rate, total_price, scheduled_at, address, latitude, longitude, notes, status, payment_method, payment_status, service:services(name, icon)';
 
 export function BookingCard({ booking, personLabel, showPhone, actions }: {
   booking: BookingRow;
@@ -55,6 +58,10 @@ export function BookingCard({ booking, personLabel, showPhone, actions }: {
         <Row icon="location-outline" text={booking.address} />
         {booking.notes ? <Row icon="chatbox-ellipses-outline" text={booking.notes} /> : null}
       </View>
+
+      {hasCoords(booking) ? (
+        <MapActions coords={booking} viewer={personLabel === 'Customer' ? 'provider' : 'customer'} active={!faded && booking.status !== 'completed'} />
+      ) : null}
 
       <PaymentNote booking={booking} viewer={personLabel === 'Customer' ? 'provider' : 'customer'} />
 
@@ -94,6 +101,38 @@ function Row({ icon, text, strong }: { icon: IconName; text: string; strong?: bo
     <View className="flex-row items-start gap-2.5">
       <Ionicons name={icon} size={17} color={colors.brand} style={{ marginTop: 1 }} />
       <Text className={`flex-1 text-[14px] leading-5 ${strong ? 'font-semibold text-ink' : 'text-slate-600'}`}>{text}</Text>
+    </View>
+  );
+}
+
+/** Provider: one tap to Google Maps navigation. Customer: check the pin they shared. */
+function MapActions({ coords, viewer, active }: { coords: Coords; viewer: 'customer' | 'provider'; active: boolean }) {
+  if (viewer === 'customer') {
+    return (
+      <Pressable onPress={() => openInMaps(coords)} className="mt-3 flex-row items-center gap-2 self-start rounded-xl bg-emerald-50 px-3 py-2 active:opacity-80">
+        <Ionicons name="navigate" size={15} color={colors.success} />
+        <Text className="text-[13px] font-semibold text-emerald-800">Location shared · View on map</Text>
+      </Pressable>
+    );
+  }
+  return (
+    <View className="mt-3 flex-row gap-2">
+      <Pressable
+        onPress={() => openDirections(coords)}
+        accessibilityRole="button"
+        className={`flex-1 flex-row items-center justify-center gap-2 rounded-xl py-2.5 active:opacity-80 ${active ? 'bg-brand-700' : 'bg-slate-100'}`}
+      >
+        <Ionicons name="navigate" size={17} color={active ? colors.white : colors.muted} />
+        <Text className={`text-[14px] font-bold ${active ? 'text-white' : 'text-slate-600'}`}>Directions</Text>
+      </Pressable>
+      <Pressable
+        onPress={() => openInMaps(coords)}
+        accessibilityRole="button"
+        className="flex-row items-center justify-center gap-2 rounded-xl border border-line bg-white px-4 py-2.5 active:bg-slate-50"
+      >
+        <Ionicons name="map-outline" size={17} color={colors.brand} />
+        <Text className="text-[14px] font-semibold text-ink">Map</Text>
+      </Pressable>
     </View>
   );
 }

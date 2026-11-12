@@ -1,11 +1,12 @@
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Avatar, Button, Card, Chip, EmptyState, Input, Loader, PriceRow, serviceGlyph } from '@/components/ui';
 import { formatPrice } from '@/lib/format';
+import { getCurrentLocation, LocationError, openInMaps, type Coords } from '@/lib/location';
 import { supabase } from '@/lib/supabase';
 import { colors, shadow } from '@/lib/theme';
 import { fetchBalance } from '@/lib/wallet';
@@ -51,6 +52,8 @@ export default function BookService() {
   const [slot, setSlot] = useState<number | null>(null);
   const [address, setAddress] = useState('');
   const [notes, setNotes] = useState('');
+  const [coords, setCoords] = useState<Coords | null>(null);
+  const [locating, setLocating] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [payWith, setPayWith] = useState<'cash' | 'wallet'>('cash');
   const [balance, setBalance] = useState<number | null>(null);
@@ -101,6 +104,27 @@ export default function BookService() {
   const paying = payWith === 'wallet' && walletShort ? 'cash' : payWith; // never submit a wallet payment we know will fail
   const ready = activeSlot !== null && address.trim().length > 0;
 
+  async function useMyLocation() {
+    setLocating(true);
+    try {
+      const loc = await getCurrentLocation();
+      setCoords({ latitude: loc.latitude, longitude: loc.longitude });
+      if (loc.address) setAddress(loc.address);
+      else if (!address.trim()) setAddress(`Pinned location (${loc.latitude.toFixed(5)}, ${loc.longitude.toFixed(5)})`);
+    } catch (e) {
+      if (e instanceof LocationError && e.openSettings) {
+        Alert.alert('Location is off', e.message, [
+          { text: 'Not now', style: 'cancel' },
+          { text: 'Open settings', onPress: () => Linking.openSettings() },
+        ]);
+      } else {
+        Alert.alert('Could not get location', e instanceof Error ? e.message : 'Please try again or type your address.');
+      }
+    } finally {
+      setLocating(false);
+    }
+  }
+
   async function onBook() {
     if (!session || !offer) return;
     if (activeSlot === null) {
@@ -123,6 +147,8 @@ export default function BookService() {
       scheduled_at: when.toISOString(),
       address: address.trim(),
       notes: notes.trim(),
+      latitude: coords?.latitude ?? null,
+      longitude: coords?.longitude ?? null,
       payment_method: paying,
     });
     setSubmitting(false);
@@ -234,10 +260,11 @@ export default function BookService() {
         {/* 4. Where */}
         <Step n={4} title="Where should they come?">
           <View className="gap-4">
+            <LocationButton coords={coords} locating={locating} onUse={useMyLocation} onRemove={() => setCoords(null)} />
             <Input
               label="Address"
               icon="location-outline"
-              placeholder="House #, street, area, city"
+              placeholder={coords ? 'Add house # / floor so they find the door' : 'House #, street, area, city'}
               value={address}
               onChangeText={setAddress}
             />
@@ -316,6 +343,50 @@ export default function BookService() {
         />
       </View>
     </KeyboardAvoidingView>
+  );
+}
+
+function LocationButton({ coords, locating, onUse, onRemove }: {
+  coords: Coords | null;
+  locating: boolean;
+  onUse: () => void;
+  onRemove: () => void;
+}) {
+  if (coords) {
+    return (
+      <View className="flex-row items-center gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-3">
+        <View className="h-10 w-10 items-center justify-center rounded-xl bg-emerald-600">
+          <Ionicons name="navigate" size={20} color={colors.white} />
+        </View>
+        <View className="flex-1">
+          <Text className="text-[14px] font-bold text-emerald-900">Location attached</Text>
+          <Text className="text-xs text-emerald-800">The provider gets directions to this exact spot</Text>
+        </View>
+        <Pressable onPress={() => openInMaps(coords)} hitSlop={8} accessibilityLabel="Check location on map" className="rounded-lg px-2 py-1.5 active:opacity-70">
+          <Text className="text-xs font-bold text-emerald-700">View</Text>
+        </Pressable>
+        <Pressable onPress={onRemove} hitSlop={8} accessibilityLabel="Remove location" className="rounded-lg px-1 py-1.5 active:opacity-70">
+          <Ionicons name="close-circle" size={20} color={colors.muted} />
+        </Pressable>
+      </View>
+    );
+  }
+  return (
+    <Pressable
+      onPress={onUse}
+      disabled={locating}
+      accessibilityRole="button"
+      className="flex-row items-center gap-3 rounded-2xl border-2 border-dashed border-brand-300 bg-brand-50 p-3 active:opacity-80"
+    >
+      <View className="h-10 w-10 items-center justify-center rounded-xl bg-brand-700">
+        {locating ? <ActivityIndicator color={colors.white} /> : <Ionicons name="locate" size={20} color={colors.white} />}
+      </View>
+      <View className="flex-1">
+        <Text className="text-[14px] font-bold text-brand-800">{locating ? 'Finding your location…' : 'Use my current location'}</Text>
+        <Text className="text-xs text-brand-700">Fills your address and helps the provider reach you</Text>
+      </View>
+      <Ionicons name="chevron-forward" size={18} color={colors.brand} />
+    </Pressable>
   );
 }
 

@@ -1,4 +1,4 @@
-import { CalendarCheck, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react'
+import { CalendarCheck, MapPin, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
 import { useToast } from '../components/Toast'
@@ -168,6 +168,17 @@ export function Bookings() {
                   <p className="mt-1 line-clamp-1 max-w-56 text-xs text-slate-400" title={b.address}>
                     {b.address}
                   </p>
+                  {b.latitude != null && b.longitude != null ? (
+                    <a
+                      href={`https://www.google.com/maps/search/?api=1&query=${b.latitude},${b.longitude}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-1 inline-flex items-center gap-1 rounded-md bg-emerald-50 px-1.5 py-0.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
+                    >
+                      <MapPin className="size-3" aria-hidden />
+                      Map
+                    </a>
+                  ) : null}
                 </Td>
                 <Td className="whitespace-nowrap">
                   <p className="text-ink">{formatDateTime(b.scheduled_at)}</p>
