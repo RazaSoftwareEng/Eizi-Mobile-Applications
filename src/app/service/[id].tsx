@@ -1,172 +1,121 @@
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { FlatList, Image, Pressable, Text, View } from 'react-native';
+import { Image, Pressable, ScrollView, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Avatar, Button, Card, EmptyState, Loader, ServiceIcon } from '@/components/ui';
+import { Button, EmptyState, Loader, serviceGlyph } from '@/components/ui';
 import { formatPrice } from '@/lib/format';
 import { supabase } from '@/lib/supabase';
-import { colors, tintFor } from '@/lib/theme';
-import type { Service } from '@/lib/types';
-import { useAuth } from '@/providers/AuthProvider';
+import { colors, shadow, tintFor } from '@/lib/theme';
+import type { Service, ServiceTask } from '@/lib/types';
 
-type Offer = {
-  id: number;
-  hourly_rate: number;
-  description: string;
-  provider: { id: string; full_name: string; created_at: string; avatar_url: string | null; bio: string } | null;
-};
-
-export default function ServiceProviders() {
+/** Step 1 of a request: tick the exact jobs needed inside this category. */
+export default function PickTasks() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { session } = useAuth();
+  const insets = useSafeAreaInsets();
   const [service, setService] = useState<Service | null>(null);
-  const [offers, setOffers] = useState<Offer[]>([]);
+  const [tasks, setTasks] = useState<ServiceTask[]>([]);
+  const [picked, setPicked] = useState<number[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     (async () => {
       const [svc, list] = await Promise.all([
-        supabase.from('services').select('*').eq('id', id).single(),
-        supabase
-          .from('provider_services')
-          .select('id, hourly_rate, description, provider:profiles(id, full_name, created_at, avatar_url, bio)')
-          .eq('service_id', id)
-          .eq('is_active', true)
-          .order('hourly_rate'),
+        supabase.from('services').select('*').eq('id', id).maybeSingle(),
+        supabase.from('service_tasks').select('*').eq('service_id', id).eq('is_active', true).order('sort').order('id'),
       ]);
       setService(svc.data as Service | null);
-      // Hide the user's own listing in case they also offer this service.
-      setOffers(((list.data as unknown as Offer[]) ?? []).filter((o) => o.provider?.id !== session?.user.id));
+      setTasks((list.data as ServiceTask[]) ?? []);
       setLoading(false);
     })();
-  }, [id, session?.user.id]);
+  }, [id]);
 
   if (loading) return <Loader />;
+  if (!service || !service.is_active) {
+    return (
+      <EmptyState icon="alert-circle-outline" title="Service unavailable" subtitle="This category isn't taking requests right now.">
+        <Button title="Go back" variant="secondary" onPress={() => router.back()} />
+      </EmptyState>
+    );
+  }
 
-  const tint = tintFor(Number(id));
-  const from = offers.length ? Math.min(...offers.map((o) => Number(o.hourly_rate))) : null;
+  const tint = tintFor(service.id);
+  const toggle = (taskId: number) => setPicked((p) => (p.includes(taskId) ? p.filter((x) => x !== taskId) : [...p, taskId]));
+
+  function proceed() {
+    router.push({ pathname: '/book/[id]', params: { id: String(service!.id), tasks: picked.join(',') } });
+  }
 
   return (
     <View className="flex-1 bg-surface">
-      <Stack.Screen options={{ title: service?.name ?? 'Service' }} />
-      <FlatList
-        data={offers}
-        keyExtractor={(o) => String(o.id)}
-        contentContainerClassName="gap-4 px-5 pb-10 pt-1"
-        showsVerticalScrollIndicator={false}
-        ListHeaderComponent={
-          service ? (
-            <View className="mb-2">
-              <View className="flex-row items-center gap-3 overflow-hidden rounded-3xl p-5" style={{ backgroundColor: tint.bg }}>
-                <View className="flex-1">
-                  <Text className="text-2xl font-bold text-ink">{service.name}</Text>
-                  <Text className="mt-1 leading-5 text-slate-600">{service.description}</Text>
-                </View>
-                {service.image_url ? (
-                  <Image
-                    source={{ uri: service.image_url }}
-                    style={{ width: 112, height: 96, marginVertical: -8 }}
-                    resizeMode="contain"
-                    accessibilityLabel={`${service.name} illustration`}
-                  />
-                ) : (
-                  <ServiceIcon service={service} tintId={service.id} size={64} onColor />
-                )}
-              </View>
+      <Stack.Screen options={{ title: service.name }} />
+      <ScrollView contentContainerClassName="px-5 pb-8 pt-1" showsVerticalScrollIndicator={false}>
+        {/* Category header */}
+        <View className="mb-5 flex-row items-center gap-4 rounded-3xl bg-white p-4" style={shadow.md}>
+          <View className="h-16 w-16 items-center justify-center rounded-2xl" style={{ backgroundColor: tint.bg }}>
+            {service.image_url ? (
+              <Image source={{ uri: service.image_url }} style={{ width: 56, height: 56 }} resizeMode="contain" />
+            ) : (
+              <MaterialCommunityIcons name={serviceGlyph(service)} size={32} color={tint.fg} />
+            )}
+          </View>
+          <View className="flex-1">
+            <Text className="text-lg font-bold text-ink">{service.name}</Text>
+            <Text className="text-[13px] leading-5 text-slate-500">{service.description}</Text>
+          </View>
+        </View>
 
-              {offers.length ? (
-                <View className="mt-4 flex-row gap-3">
-                  <Fact icon="people" label={`${offers.length} ${offers.length === 1 ? 'pro' : 'pros'} available`} />
-                  {from !== null ? <Fact icon="pricetag" label={`from ${formatPrice(from)}/hr`} /> : null}
-                </View>
-              ) : null}
+        <Text className="mb-1 text-base font-bold text-ink">What do you need?</Text>
+        <Text className="mb-3 text-[13px] text-slate-500">Tick one or more. The worker confirms the final price after checking.</Text>
 
-              {offers.length ? <Text className="mt-6 text-lg font-bold text-ink">Choose a professional</Text> : null}
-            </View>
-          ) : undefined
-        }
-        ListEmptyComponent={
-          <EmptyState
-            icon="people-outline"
-            title="No pros available yet"
-            subtitle="Nobody is offering this service right now. Please check back soon."
-          >
-            <Button title="Browse other services" variant="secondary" onPress={() => router.back()} />
-          </EmptyState>
-        }
-        renderItem={({ item }) => {
-          const since = item.provider?.created_at ? new Date(item.provider.created_at).getFullYear() : null;
-          return (
-            <Card className="p-4">
-              <View className="flex-row items-center gap-3">
-                <Avatar name={item.provider?.full_name ?? ''} size={52} uri={item.provider?.avatar_url} />
-                <View className="flex-1">
-                  <Text className="text-base font-bold text-ink" numberOfLines={1}>
-                    {item.provider?.full_name || 'Provider'}
-                  </Text>
-                  {since ? <Text className="mt-0.5 text-[13px] text-slate-500">On Eizi since {since}</Text> : null}
-                </View>
-                <View className="items-end rounded-2xl bg-brand-50 px-3 py-2">
-                  <Text className="text-lg font-bold text-brand-700">{formatPrice(item.hourly_rate)}</Text>
-                  <Text className="text-[11px] font-medium text-brand-600">per hour</Text>
-                </View>
-              </View>
+        {tasks.length === 0 ? (
+          <EmptyState icon="construct-outline" title="No jobs listed yet" subtitle="Please check back soon." />
+        ) : (
+          <View className="gap-3">
+            {tasks.map((t) => {
+              const on = picked.includes(t.id);
+              return (
+                <Pressable
+                  key={t.id}
+                  onPress={() => toggle(t.id)}
+                  accessibilityRole="checkbox"
+                  accessibilityState={{ checked: on }}
+                  className={`flex-row items-center gap-3 rounded-2xl border-2 bg-white p-4 ${on ? 'border-brand-600' : 'border-transparent'}`}
+                  style={on ? shadow.md : shadow.sm}
+                >
+                  <View className={`h-6 w-6 items-center justify-center rounded-md border-2 ${on ? 'border-brand-700 bg-brand-700' : 'border-slate-300 bg-white'}`}>
+                    {on ? <Ionicons name="checkmark" size={16} color={colors.white} /> : null}
+                  </View>
+                  <View className="flex-1">
+                    <Text className="text-[15px] font-semibold text-ink">{t.name}</Text>
+                    {t.base_price != null ? (
+                      <Text className="mt-0.5 text-xs text-slate-500">Usually from {formatPrice(t.base_price)}</Text>
+                    ) : null}
+                  </View>
+                </Pressable>
+              );
+            })}
+          </View>
+        )}
+      </ScrollView>
 
-              {item.description ? (
-                <Text className="mt-4 leading-5 text-slate-600" numberOfLines={3}>
-                  {item.description}
-                </Text>
-              ) : null}
-              {item.provider?.bio ? <ProviderBio bio={item.provider.bio} /> : null}
-
-              <View className="mt-4 flex-row items-center gap-2">
-                <View className="flex-1 flex-row items-center gap-1.5">
-                  <Ionicons name="time-outline" size={16} color={colors.muted} />
-                  <Text className="text-[13px] text-slate-500">
-                    2 hrs ≈ {formatPrice(Number(item.hourly_rate) * 2)}
-                  </Text>
-                </View>
-                <Button
-                  title="Book now"
-                  size="md"
-                  className="px-6"
-                  onPress={() => router.push({ pathname: '/book/[id]', params: { id: String(item.id) } })}
-                />
-              </View>
-            </Card>
-          );
-        }}
-      />
-    </View>
-  );
-}
-
-function Fact({ icon, label }: { icon: 'people' | 'pricetag'; label: string }) {
-  return (
-    <Card elevated="sm" className="flex-1 flex-row items-center gap-2 rounded-2xl px-3 py-3">
-      <Ionicons name={icon} size={16} color={colors.brand} />
-      <Text className="flex-1 text-[13px] font-semibold text-ink" numberOfLines={1}>
-        {label}
-      </Text>
-    </Card>
-  );
-}
-
-function ProviderBio({ bio }: { bio: string }) {
-  const [open, setOpen] = useState(false);
-  const long = bio.length > 160;
-  return (
-    <View className="mt-3 rounded-2xl bg-surface p-3">
-      <Text className="mb-1 text-[11px] font-bold uppercase tracking-wider text-slate-400">About</Text>
-      <Text className="text-[13px] leading-5 text-slate-600" numberOfLines={open ? undefined : 3}>
-        {bio}
-      </Text>
-      {long ? (
-        <Pressable onPress={() => setOpen((o) => !o)} hitSlop={8} className="mt-1 self-start">
-          <Text className="text-[13px] font-semibold text-brand-700">{open ? 'Show less' : 'Read more'}</Text>
-        </Pressable>
-      ) : null}
+      {/* Sticky bar: selection + visiting fee */}
+      <View className="gap-3 rounded-t-3xl bg-white px-5 pt-4" style={[shadow.top, { paddingBottom: insets.bottom + 12 }]}>
+        <View className="flex-row items-center gap-2 rounded-2xl bg-brand-50 px-3 py-2.5">
+          <Ionicons name="home-outline" size={18} color={colors.brand} />
+          <Text className="flex-1 text-[13px] text-brand-800">
+            <Text className="font-bold">{picked.length} selected</Text> · Base visiting fee{' '}
+            <Text className="font-bold">{formatPrice(service.visit_fee)}</Text> (adjusted in the final price)
+          </Text>
+        </View>
+        <Button
+          title={picked.length ? 'Proceed & set location' : 'Select at least one job'}
+          icon="arrow-forward"
+          onPress={proceed}
+          disabled={!picked.length}
+        />
+      </View>
     </View>
   );
 }

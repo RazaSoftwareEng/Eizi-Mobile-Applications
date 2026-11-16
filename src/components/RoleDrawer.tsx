@@ -47,8 +47,7 @@ export function RoleDrawer({ role, items }: { role: Role; items: MenuItem[] }) {
         headerTitleAlign: 'center',
         headerTitle: () => (
           <Pressable onPress={() => router.navigate(home as never)} className="flex-row items-center gap-2" accessibilityLabel="Eizi home">
-            <Image source={require('../../assets/splash-icon.png')} style={[{ width: 36, height: 36 }, shadow.sm]} />
-            <Text className="text-xl font-extrabold tracking-tight text-ink">Eizi</Text>
+            <Image source={require('../../assets/logo-wide.png')} style={{ width: 72, height: 45 }} resizeMode="contain" accessibilityLabel="Eizi" />
           </Pressable>
         ),
         headerLeft: () => (
@@ -92,15 +91,23 @@ function AlertsBell({ role }: { role: Role }) {
     if (!session) return;
     let alive = true;
     const check = async () => {
-      const q = supabase.from('bookings').select('id', { count: 'exact', head: true });
-      const { count: c } =
-        role === 'provider'
-          ? await q.eq('provider_id', session.user.id).eq('status', 'pending')
-          : await q.eq('customer_id', session.user.id).eq('status', 'accepted').gte('scheduled_at', new Date().toISOString());
-      if (alive) setCount(c ?? 0);
+      let c = 0;
+      if (role === 'provider') {
+        const { data } = await supabase.rpc('open_requests');
+        c = Array.isArray(data) ? data.length : 0;
+      } else {
+        const { count: n } = await supabase
+          .from('bookings')
+          .select('id', { count: 'exact', head: true })
+          .eq('customer_id', session.user.id)
+          .eq('status', 'accepted')
+          .eq('quote_status', 'sent');
+        c = n ?? 0;
+      }
+      if (alive) setCount(c);
     };
     check();
-    const t = setInterval(check, 60_000);
+    const t = setInterval(check, 30_000);
     return () => {
       alive = false;
       clearInterval(t);
@@ -109,8 +116,8 @@ function AlertsBell({ role }: { role: Role }) {
 
   const label =
     role === 'provider'
-      ? count ? `${count} new booking request${count > 1 ? 's' : ''}` : 'Booking requests'
-      : count ? `${count} confirmed upcoming booking${count > 1 ? 's' : ''}` : 'My bookings';
+      ? count ? `${count} job request${count > 1 ? 's' : ''} near you` : 'Job requests'
+      : count ? `${count} price${count > 1 ? 's' : ''} waiting for your approval` : 'My bookings';
 
   return (
     <View style={{ marginRight: 16 }}>

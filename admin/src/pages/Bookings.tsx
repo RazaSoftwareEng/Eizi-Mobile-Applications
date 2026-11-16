@@ -1,4 +1,4 @@
-import { CalendarCheck, MapPin, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react'
+import { CalendarCheck, MapPin, Pencil, Plus, RefreshCw, Star, Trash2 } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
 import { useToast } from '../components/Toast'
@@ -24,7 +24,7 @@ import {
 } from '../components/ui'
 import { formatDateTime, formatPrice, startOfToday, toLocalInput } from '../lib/format'
 import { supabase } from '../lib/supabase'
-import { BOOKING_STATUSES, STATUS_LABEL, type Booking, type BookingStatus, type Listing, type Profile } from '../lib/types'
+import { BOOKING_STATUSES, STATUS_LABEL, type Booking, type BookingStatus, type Profile, type Service, type ServiceTask } from '../lib/types'
 import { must, useLoad } from '../lib/useLoad'
 
 type StatusFilter = 'all' | 'pending' | 'accepted' | 'completed' | 'closed'
@@ -71,7 +71,7 @@ export function Bookings() {
       return (
         !q ||
         String(b.id) === q.replace('#', '') ||
-        [b.customer?.full_name, b.provider?.full_name, b.service?.name, b.address].some((v) => v?.toLowerCase().includes(q))
+        [b.customer?.full_name, b.provider?.full_name, b.service?.name, b.address, ...(b.tasks ?? []).map((t) => t.name)].some((v) => v?.toLowerCase().includes(q))
       )
     })
   }, [bookings, status, when, query, now])
@@ -119,8 +119,8 @@ export function Bookings() {
               onChange={setStatus}
               options={[
                 { value: 'all', label: 'All', count: bookings.length },
-                { value: 'pending', label: 'Pending', count: count((b) => b.status === 'pending') },
-                { value: 'accepted', label: 'Confirmed', count: count((b) => b.status === 'accepted') },
+                { value: 'pending', label: 'Finding worker', count: count((b) => b.status === 'pending') },
+                { value: 'accepted', label: 'In progress', count: count((b) => b.status === 'accepted') },
                 { value: 'completed', label: 'Completed', count: count((b) => b.status === 'completed') },
                 { value: 'closed', label: 'Closed', count: count((b) => matchStatus(b, 'closed')) },
               ]}
@@ -148,7 +148,7 @@ export function Bookings() {
             head={
               <tr>
                 <Th>Booking</Th>
-                <Th>Customer → Provider</Th>
+                <Th>Customer → Worker</Th>
                 <Th>Scheduled</Th>
                 <Th className="text-right">Total</Th>
                 <Th>Status</Th>
@@ -161,10 +161,13 @@ export function Bookings() {
                 <Td>
                   <p className="font-semibold text-ink">{b.service?.name}</p>
                   <p className="font-mono text-xs text-slate-400">#{b.id}</p>
+                  <p className="mt-1 line-clamp-2 max-w-60 text-xs text-slate-500" title={(b.tasks ?? []).map((t) => t.name).join(', ')}>
+                    {(b.tasks ?? []).map((t) => t.name).join(', ')}
+                  </p>
                 </Td>
                 <Td>
                   <p className="font-medium text-ink">{b.customer?.full_name || '—'}</p>
-                  <p className="text-xs text-slate-500">→ {b.provider?.full_name || '—'}</p>
+                  <p className="text-xs text-slate-500">→ {b.provider?.full_name || (b.status === 'pending' ? 'searching…' : '—')}</p>
                   <p className="mt-1 line-clamp-1 max-w-56 text-xs text-slate-400" title={b.address}>
                     {b.address}
                   </p>
@@ -182,14 +185,22 @@ export function Bookings() {
                 </Td>
                 <Td className="whitespace-nowrap">
                   <p className="text-ink">{formatDateTime(b.scheduled_at)}</p>
-                  <p className="text-xs text-slate-500">
-                    {b.hours} hr{b.hours > 1 ? 's' : ''}
-                  </p>
+                  {b.rating ? (
+                    <p className="mt-1 inline-flex items-center gap-1 text-xs font-semibold text-amber-700" title={b.review || undefined}>
+                      <Star className="size-3 fill-current" aria-hidden /> {b.rating}/5
+                    </p>
+                  ) : null}
                 </Td>
                 <Td className="text-right whitespace-nowrap">
                   <p className="font-semibold text-ink tabular-nums">{formatPrice(b.total_price)}</p>
                   <p className="text-xs text-slate-500 tabular-nums">
-                    {formatPrice(b.hourly_rate)} × {b.hours}
+                    {b.quote_status === 'approved' || b.status === 'completed'
+                      ? 'agreed price'
+                      : b.quote_status === 'sent'
+                        ? `quote ${formatPrice(b.quote_amount ?? 0)} waiting`
+                        : b.quote_status === 'declined'
+                          ? `quote ${formatPrice(b.quote_amount ?? 0)} declined`
+                          : 'visiting fee'}
                   </p>
                   {b.payment_method === 'wallet' ? (
                     <span className="mt-1 inline-flex rounded-md bg-brand-50 px-1.5 py-0.5 text-[11px] font-semibold text-brand-700">
@@ -253,7 +264,7 @@ export function Bookings() {
         title={`Delete booking #${deleting?.id}?`}
         onClose={() => setDeleting(null)}
         onConfirm={() => (deleting ? onDelete(deleting) : undefined)}
-        message="The booking disappears for both the customer and the provider. To keep a record, set its status to Cancelled instead."
+        message="The booking disappears for both the customer and the worker. To keep a record, set its status to Cancelled instead."
       />
     </>
   )
@@ -263,21 +274,26 @@ function EditBooking({ booking, onClose, onSaved }: { booking: Booking; onClose:
   const toast = useToast()
   const [status, setStatus] = useState<BookingStatus>(booking.status)
   const [when, setWhen] = useState(toLocalInput(booking.scheduled_at))
-  const [hours, setHours] = useState(String(booking.hours))
+  const [price, setPrice] = useState(String(Math.round(Number(booking.total_price))))
   const [address, setAddress] = useState(booking.address)
   const [notes, setNotes] = useState(booking.notes)
   const [busy, setBusy] = useState(false)
-
-  const h = Number(hours)
-  const total = Number(booking.hourly_rate) * (h > 0 ? h : 0)
+  const held = booking.payment_status === 'held'
 
   async function save() {
-    if (!(h >= 1 && h <= 12)) return toast.error('Hours must be between 1 and 12.')
+    const total = Number(price)
+    if (!(total >= 0)) return toast.error('Enter a valid price.')
     if (!address.trim()) return toast.error('Address is required.')
     setBusy(true)
     const { error } = await supabase
       .from('bookings')
-      .update({ status, scheduled_at: new Date(when).toISOString(), hours: h, total_price: total, address: address.trim(), notes: notes.trim() })
+      .update({
+        status,
+        scheduled_at: new Date(when).toISOString(),
+        ...(held ? {} : { total_price: total }),
+        address: address.trim(),
+        notes: notes.trim(),
+      })
       .eq('id', booking.id)
     setBusy(false)
     if (error) return toast.error(error.message)
@@ -289,7 +305,7 @@ function EditBooking({ booking, onClose, onSaved }: { booking: Booking; onClose:
     <Modal
       open
       title={`Edit booking #${booking.id}`}
-      subtitle={`${booking.service?.name} · ${booking.customer?.full_name} → ${booking.provider?.full_name}`}
+      subtitle={`${booking.service?.name} · ${booking.customer?.full_name} → ${booking.provider?.full_name ?? 'no worker yet'}`}
       onClose={onClose}
       width="max-w-xl"
       footer={
@@ -312,12 +328,17 @@ function EditBooking({ booking, onClose, onSaved }: { booking: Booking; onClose:
           ))}
         </SelectField>
         <TextField label="Date & time" type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} />
-        <TextField label="Hours" type="number" min={1} max={12} value={hours} onChange={(e) => setHours(e.target.value)} />
-        <div className="rounded-xl bg-slate-50 px-4 py-2.5">
-          <p className="text-xs text-slate-500">
-            New total ({formatPrice(booking.hourly_rate)} × {h > 0 ? h : 0})
-          </p>
-          <p className="text-lg font-bold text-brand-700 tabular-nums">{formatPrice(total)}</p>
+        <TextField
+          label={held ? 'Price (locked: paid from wallet)' : 'Price (Rs)'}
+          type="number"
+          min={0}
+          value={price}
+          disabled={held}
+          onChange={(e) => setPrice(e.target.value)}
+        />
+        <div className="rounded-xl bg-slate-50 px-4 py-2.5 text-xs text-slate-500">
+          Visiting fee {formatPrice(booking.visit_fee)}
+          {booking.quote_amount != null ? ` · quote ${formatPrice(booking.quote_amount)} (${booking.quote_status})` : ''}
         </div>
         <div className="sm:col-span-2">
           <TextField label="Address" value={address} onChange={(e) => setAddress(e.target.value)} />
@@ -333,59 +354,50 @@ function EditBooking({ booking, onClose, onSaved }: { booking: Booking; onClose:
 function CreateBooking({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
   const toast = useToast()
   const { data, loading } = useLoad(async () => {
-    const [customers, listings] = await Promise.all([
-      supabase.from('profiles').select('id, full_name, phone, role, created_at').order('full_name').then((r) => must(r) as Profile[]),
-      supabase
-        .from('provider_services')
-        .select('*, provider:profiles(id, full_name), service:services(id, name)')
-        .eq('is_active', true)
-        .then((r) => must(r) as unknown as Listing[]),
+    const [customers, services, tasks] = await Promise.all([
+      supabase.from('profiles').select('id, full_name, phone, role, created_at').eq('role', 'customer').order('full_name').then((r) => must(r) as Profile[]),
+      supabase.from('services').select('*').eq('is_active', true).order('sort').then((r) => must(r) as Service[]),
+      supabase.from('service_tasks').select('*').eq('is_active', true).order('sort').then((r) => must(r) as ServiceTask[]),
     ])
-    return { customers, listings }
+    return { customers, services, tasks }
   })
 
   const [customerId, setCustomerId] = useState('')
-  const [listingId, setListingId] = useState('')
-  const [hours, setHours] = useState('2')
-  const [when, setWhen] = useState(() => {
-    const d = new Date()
-    d.setDate(d.getDate() + 1)
-    d.setHours(10, 0, 0, 0)
-    return toLocalInput(d.toISOString())
-  })
+  const [serviceId, setServiceId] = useState('')
+  const [picked, setPicked] = useState<number[]>([])
+  const [when, setWhen] = useState(() => toLocalInput(new Date().toISOString()))
   const [address, setAddress] = useState('')
   const [notes, setNotes] = useState('')
   const [busy, setBusy] = useState(false)
 
-  const listing = data?.listings.find((l) => String(l.id) === listingId)
-  const h = Number(hours)
-  const total = listing ? Number(listing.hourly_rate) * (h > 0 ? h : 0) : 0
+  const service = data?.services.find((s) => String(s.id) === serviceId)
+  const tasks = data?.tasks.filter((t) => String(t.service_id) === serviceId) ?? []
 
   async function create() {
-    if (!customerId || !listingId) return toast.error('Choose a customer and a provider listing.')
-    if (!(h >= 1 && h <= 12)) return toast.error('Hours must be between 1 and 12.')
-    if (!address.trim()) return toast.error('Address is required.')
+    if (!customerId || !serviceId) return toast.error('Choose a customer and a service.')
+    if (!picked.length) return toast.error('Tick at least one sub-service.')
+    if (address.trim().length < 3) return toast.error('Address is required.')
     setBusy(true)
-    // Price, provider and service are filled in by the database from the listing.
+    // Fee and task names are filled in by the database; nearby online workers are notified.
     const { error } = await supabase.from('bookings').insert({
       customer_id: customerId,
-      provider_service_id: Number(listingId),
-      hours: h,
+      service_id: Number(serviceId),
+      task_ids: picked,
       scheduled_at: new Date(when).toISOString(),
       address: address.trim(),
       notes: notes.trim(),
     })
     setBusy(false)
     if (error) return toast.error(error.message)
-    toast.success('Booking created')
+    toast.success('Request created and sent to workers')
     onCreated()
   }
 
   return (
     <Modal
       open
-      title="New booking"
-      subtitle="Book on behalf of a customer (e.g. a phone order)."
+      title="New request"
+      subtitle="Create a request for a customer (e.g. a phone order). It goes to online workers like any app request."
       onClose={onClose}
       width="max-w-xl"
       footer={
@@ -394,7 +406,7 @@ function CreateBooking({ onClose, onCreated }: { onClose: () => void; onCreated:
             Cancel
           </Button>
           <Button onClick={create} loading={busy} disabled={!data}>
-            Create booking
+            Create request
           </Button>
         </>
       }
@@ -410,37 +422,56 @@ function CreateBooking({ onClose, onCreated }: { onClose: () => void; onCreated:
                 <option key={c.id} value={c.id}>
                   {c.full_name || 'No name'}
                   {c.phone ? ` · ${c.phone}` : ''}
-                  {c.role === 'provider' ? ' (provider)' : ''}
                 </option>
               ))}
             </SelectField>
           </div>
           <div className="sm:col-span-2">
-            <SelectField label="Service & provider" value={listingId} onChange={(e) => setListingId(e.target.value)}>
-              <option value="">Select a live listing…</option>
-              {data?.listings
-                .filter((l) => l.provider_id !== customerId)
-                .sort((a, b) => (a.service?.name ?? '').localeCompare(b.service?.name ?? ''))
-                .map((l) => (
-                  <option key={l.id} value={l.id}>
-                    {l.service?.name} — {l.provider?.full_name} ({formatPrice(l.hourly_rate)}/hr)
-                  </option>
-                ))}
+            <SelectField
+              label="Service"
+              value={serviceId}
+              onChange={(e) => {
+                setServiceId(e.target.value)
+                setPicked([])
+              }}
+            >
+              <option value="">Select a service…</option>
+              {data?.services.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name} (visit {formatPrice(s.visit_fee)})
+                </option>
+              ))}
             </SelectField>
           </div>
-          <TextField label="Date & time" type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} />
-          <TextField label="Hours" type="number" min={1} max={12} value={hours} onChange={(e) => setHours(e.target.value)} />
+          {tasks.length ? (
+            <div className="flex flex-wrap gap-2 sm:col-span-2">
+              {tasks.map((t) => {
+                const on = picked.includes(t.id)
+                return (
+                  <button
+                    key={t.id}
+                    type="button"
+                    aria-pressed={on}
+                    onClick={() => setPicked((p) => (on ? p.filter((x) => x !== t.id) : [...p, t.id]))}
+                    className={`cursor-pointer rounded-full border-2 px-3 py-1.5 text-xs font-semibold transition ${on ? 'border-brand-600 bg-brand-50 text-brand-800' : 'border-slate-200 text-slate-600 hover:border-slate-300'}`}
+                  >
+                    {on ? '✓ ' : ''}
+                    {t.name}
+                  </button>
+                )
+              })}
+            </div>
+          ) : null}
+          <TextField label="When" type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} />
+          <div className="flex items-center justify-between rounded-xl bg-brand-50 px-4 py-2.5">
+            <span className="text-sm font-medium text-brand-800">Visiting fee</span>
+            <span className="text-lg font-bold text-brand-700 tabular-nums">{service ? formatPrice(service.visit_fee) : '—'}</span>
+          </div>
           <div className="sm:col-span-2">
             <TextField label="Address" value={address} onChange={(e) => setAddress(e.target.value)} placeholder="House #, street, area, city" />
           </div>
           <div className="sm:col-span-2">
             <TextArea label="Notes (optional)" value={notes} onChange={(e) => setNotes(e.target.value)} />
-          </div>
-          <div className="flex items-center justify-between rounded-xl bg-brand-50 px-4 py-3 sm:col-span-2">
-            <span className="text-sm font-medium text-brand-800">
-              Total {listing ? `(${formatPrice(listing.hourly_rate)} × ${h > 0 ? h : 0} hrs)` : ''}
-            </span>
-            <span className="text-xl font-bold text-brand-700 tabular-nums">{formatPrice(total)}</span>
           </div>
         </div>
       )}

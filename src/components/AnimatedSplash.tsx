@@ -126,7 +126,7 @@ export function AnimatedSplash({ ready }: { ready: boolean }) {
 
         <Animated.Text style={[styles.word, wordStyle]}>Eizi</Animated.Text>
         <Animated.View style={[styles.taglineWrap, taglineStyle]}>
-          <Text style={styles.tagline}>Ghar ki har service, ek tap door</Text>
+          <Text style={styles.tagline}>Your Home, Our Care</Text>
         </Animated.View>
       </View>
 

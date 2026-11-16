@@ -23,7 +23,7 @@ const options = [
     icon: 'account-hard-hat',
     title: 'I provide a service',
     subtitle: 'Earn with your skills',
-    points: ['Set your own hourly price', 'Accept only the jobs you want', 'Get customers near you'],
+    points: ['Go online and get jobs near you', 'Send your price after checking the work', 'Get paid in cash or to your wallet'],
   },
 ] as const;
 

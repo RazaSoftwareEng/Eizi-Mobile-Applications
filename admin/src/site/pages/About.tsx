@@ -9,7 +9,7 @@ import { Screen } from '../phone/screens'
 export function About() {
   usePageMeta(
     'About Eizi — fair, simple home services',
-    'Eizi makes booking help at home as easy as booking a ride: clear hourly prices, pros who set their own rates, and payments that are safe for everyone.',
+    'Eizi makes booking help at home as easy as booking a ride: nearby verified workers, a price you approve before work starts, and payments that are safe for everyone.',
   )
 
   return (
@@ -25,7 +25,7 @@ export function About() {
             </h1>
             <p className="mt-5 max-w-xl text-lg leading-8 text-slate-600">
               Finding a reliable cook, cleaner or electrician usually means phone calls, haggling and guesswork about the final bill. Eizi replaces all of that
-              with a few taps: pick a service, choose your hours, see the price and book.
+              with a few taps: tick what you need, pin your location, approve the price and relax.
             </p>
             <div className="mt-8 flex flex-wrap items-center gap-5">
               <DownloadButton />
@@ -59,8 +59,8 @@ export function About() {
             icon={Smile}
             title="For customers"
             points={[
-              'Compare pros and their hourly rates before you book',
-              'See the full price — rate × hours — upfront',
+              'See the visiting fee before you request',
+              'Approve the final price before any work starts',
               'Pay cash after the job, or from your wallet',
               'Cancel before it starts; wallet payments refunded instantly',
             ]}
@@ -68,7 +68,7 @@ export function About() {
           <SideCard
             icon={Users}
             dark
-            title="For service providers"
+            title="For workers"
             points={[
               'Set your own price for every service you offer',
               'Choose the jobs that fit your day',
@@ -84,7 +84,7 @@ export function About() {
         <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
           <FeatureCard icon={Lightbulb} title="Clarity" text="Clear prices, clear steps and clear status updates — no fine print." />
           <FeatureCard icon={ShieldCheck} tone="blue" title="Safety" text="Money is held until the job is done, and every top-up is checked by a person." />
-          <FeatureCard icon={HandCoins} tone="amber" title="Fairness" text="Pros keep control of their rates; customers only pay for the hours they book." />
+          <FeatureCard icon={HandCoins} tone="amber" title="Fairness" text="Workers quote after seeing the job; customers approve before anything starts." />
           <FeatureCard icon={HeartHandshake} tone="violet" title="Respect" text="For people’s homes, time and work — on every single booking." />
         </div>
       </Section>

@@ -15,11 +15,8 @@ const NAV = [
 
 export function Logo({ light }: { light?: boolean }) {
   return (
-    <Link to="/" className="flex items-center gap-2.5" aria-label="Eizi home">
-      <span className={`flex size-10 items-center justify-center rounded-xl text-lg font-black shadow-lg ${light ? 'bg-white text-brand-700' : 'bg-brand-700 text-white shadow-brand'}`}>
-        E
-      </span>
-      <span className={`text-xl font-extrabold tracking-tight ${light ? 'text-white' : 'text-ink'}`}>Eizi</span>
+    <Link to="/" className="flex items-center" aria-label="Eizi home">
+      <img src={light ? '/logo-white.png' : '/logo.png'} alt="Eizi" width={80} height={50} className="h-12 w-auto" />
     </Link>
   )
 }
@@ -115,7 +112,7 @@ function Footer() {
         <div>
           <Logo light />
           <p className="mt-4 max-w-sm text-sm leading-6 text-brand-200/90">
-            Ghar ki har service, ek tap door. Book cooks, cleaners, electricians and more by the hour — with the price shown before you book.
+            Your Home, Our Care. Tick what you need, a verified worker nearby comes over, and you approve the price before any work starts.
           </p>
           <div className="mt-5">
             <DownloadButton size="sm" variant="light" />

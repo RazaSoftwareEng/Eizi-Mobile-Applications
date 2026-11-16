@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { lazy, Suspense, useEffect } from 'react'
 import { Link, Navigate, Route, Routes } from 'react-router'
 
 import { useAuth } from './auth/AuthProvider'
@@ -8,7 +8,6 @@ import { Spinner } from './components/ui'
 import { missingConfig } from './lib/supabase'
 import { Bookings } from './pages/Bookings'
 import { Dashboard } from './pages/Dashboard'
-import { Listings } from './pages/Listings'
 import { Login } from './pages/Login'
 import { Messages } from './pages/Messages'
 import { Services } from './pages/Services'
@@ -19,6 +18,9 @@ import { About } from './site/pages/About'
 import { Contact } from './site/pages/Contact'
 import { Home } from './site/pages/Home'
 import { Layout as SiteLayout } from './site/SiteLayout'
+
+// The map library is big — load it only when an admin opens the Live map page.
+const LiveMap = lazy(() => import('./pages/LiveMap').then((m) => ({ default: m.LiveMap })))
 
 /** Admin area: tab title + "don't index me" for search engines. */
 function useAdminMeta() {
@@ -79,8 +81,15 @@ export default function App() {
         <Route index element={<Dashboard />} />
         <Route path="users" element={<Users />} />
         <Route path="services" element={<Services />} />
-        <Route path="listings" element={<Listings />} />
         <Route path="bookings" element={<Bookings />} />
+        <Route
+          path="map"
+          element={
+            <Suspense fallback={<Spinner className="py-20" />}>
+              <LiveMap />
+            </Suspense>
+          }
+        />
         <Route path="wallet" element={<Wallet />} />
         <Route path="messages" element={<Messages />} />
         <Route path="*" element={<Navigate to="/admin" replace />} />

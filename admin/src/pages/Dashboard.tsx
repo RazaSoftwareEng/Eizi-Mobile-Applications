@@ -46,8 +46,8 @@ async function loadDashboard(days: number) {
       countOf(supabase.from('profiles').select('*', { count: 'exact', head: true })),
       countOf(supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('role', 'customer')),
       countOf(supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('role', 'provider')),
-      countOf(supabase.from('services').select('*', { count: 'exact', head: true })),
-      countOf(supabase.from('provider_services').select('*', { count: 'exact', head: true }).eq('is_active', true)),
+      countOf(supabase.from('services').select('*', { count: 'exact', head: true }).eq('is_active', true)),
+      countOf(supabase.from('provider_presence').select('*', { count: 'exact', head: true }).eq('is_online', true)),
       countOf(supabase.from('bookings').select('*', { count: 'exact', head: true }).eq('status', 'pending')),
     ]),
     supabase
@@ -174,9 +174,9 @@ export function Dashboard() {
           <div className="grid grid-cols-2 overflow-hidden rounded-2xl border border-slate-200/70 bg-white shadow-card lg:grid-cols-5">
             <Total icon={Users} label="Total users" value={data.totals.users} to="/admin/users" />
             <Total dot={CHART.series1} label="Customers" value={data.totals.customers} to="/admin/users" />
-            <Total dot={CHART.series2} label="Providers" value={data.totals.providers} to="/admin/users" />
+            <Total dot={CHART.series2} label="Workers" value={data.totals.providers} to="/admin/users" />
             <Total icon={Layers} label="Services" value={data.totals.services} to="/admin/services" />
-            <Total icon={BriefcaseBusiness} label="Live listings" value={data.totals.listings} to="/admin/listings" className="col-span-2 lg:col-span-1" />
+            <Total icon={BriefcaseBusiness} label="Workers online" value={data.totals.listings} to="/admin/users" className="col-span-2 lg:col-span-1" />
           </div>
 
           {/* Charts */}

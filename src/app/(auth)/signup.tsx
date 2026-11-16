@@ -1,17 +1,17 @@
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { Link, router } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Alert, Pressable, Text, View } from 'react-native';
 
 import { AuthShell } from '@/components/AuthHeader';
-import { Button, Input } from '@/components/ui';
+import { Button, Input, serviceGlyph } from '@/components/ui';
 import { supabase } from '@/lib/supabase';
 import { colors, shadow } from '@/lib/theme';
-import type { Role } from '@/lib/types';
+import type { Role, Service } from '@/lib/types';
 
 const ROLES = [
   { role: 'customer', icon: 'home-heart', title: 'Customer', subtitle: 'I need a service' },
-  { role: 'provider', icon: 'account-hard-hat', title: 'Provider', subtitle: 'I offer a service' },
+  { role: 'provider', icon: 'account-hard-hat', title: 'Worker', subtitle: 'I offer a service' },
 ] as const;
 
 export default function Signup() {
@@ -20,7 +20,22 @@ export default function Signup() {
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [city, setCity] = useState('');
+  const [cnic, setCnic] = useState('');
+  const [serviceId, setServiceId] = useState<number | null>(null);
+  const [services, setServices] = useState<Service[]>([]);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    supabase.from('services').select('*').eq('is_active', true).order('sort').then(({ data }) => setServices((data as Service[]) ?? []));
+  }, []);
+
+  const cnicDigits = cnic.replace(/\D/g, '');
+  // 35202-1234567-1
+  const formatCnic = (t: string) => {
+    const d = t.replace(/\D/g, '').slice(0, 13);
+    return [d.slice(0, 5), d.slice(5, 12), d.slice(12)].filter(Boolean).join('-');
+  };
 
   async function onSignup() {
     if (!role) {
@@ -31,12 +46,32 @@ export default function Signup() {
       Alert.alert('Check your details', 'Name and email are required, and the password needs at least 6 characters.');
       return;
     }
+    if (phone.replace(/\D/g, '').length < 10) {
+      Alert.alert('Phone number required', 'Add a phone number so the other side can call you about a job.');
+      return;
+    }
+    if (role === 'customer' && city.trim().length < 2) {
+      Alert.alert('City / area required', 'Tell us your city or area, e.g. Lahore.');
+      return;
+    }
+    if (role === 'provider' && (cnicDigits.length !== 13 || !serviceId)) {
+      Alert.alert('Check your details', 'Enter your 13-digit CNIC and choose the service you offer.');
+      return;
+    }
     setLoading(true);
     const { data, error } = await supabase.auth.signUp({
       email: email.trim(),
       password,
       // The role is saved with the account, so after logging in the user goes straight to their home screen.
-      options: { data: { full_name: fullName.trim(), phone: phone.trim() || null, role } },
+      options: {
+        data: {
+          full_name: fullName.trim(),
+          phone: phone.trim(),
+          role,
+          city: city.trim(),
+          ...(role === 'provider' ? { cnic: cnicDigits, service_id: String(serviceId) } : {}),
+        },
+      },
     });
     setLoading(false);
 
@@ -53,8 +88,8 @@ export default function Signup() {
 
   return (
     <AuthShell
-      title="Create your account"
-      subtitle="Book trusted help — or start earning with your skills."
+      title="Create Account"
+      subtitle="Book trusted help at home, or start earning with your skills."
       footer={
         <View className="flex-row justify-center">
           <Text className="text-[15px] text-slate-500">Already have an account? </Text>
@@ -100,8 +135,43 @@ export default function Signup() {
           value={phone}
           onChangeText={setPhone}
           autoComplete="tel"
-          hint="Optional — helps the other person reach you about a booking."
+          hint="For direct calls about a job."
         />
+        {role === 'provider' ? (
+          <>
+            <Input
+              label="CNIC number"
+              icon="card-outline"
+              placeholder="35202-1234567-1"
+              keyboardType="number-pad"
+              value={cnic}
+              onChangeText={(t) => setCnic(formatCnic(t))}
+              hint="Kept private. Only Eizi admins can see it, for verification."
+            />
+            <View className="gap-2">
+              <Text className="text-[13px] font-semibold text-slate-600">Service category</Text>
+              <View className="flex-row flex-wrap gap-2">
+                {services.map((s) => {
+                  const on = serviceId === s.id;
+                  return (
+                    <Pressable
+                      key={s.id}
+                      onPress={() => setServiceId(s.id)}
+                      accessibilityRole="radio"
+                      accessibilityState={{ checked: on }}
+                      className={`flex-row items-center gap-2 rounded-2xl border-2 px-3 py-2.5 ${on ? 'border-brand-600 bg-brand-50' : 'border-line bg-white'}`}
+                    >
+                      <MaterialCommunityIcons name={serviceGlyph(s)} size={18} color={on ? colors.brand : colors.muted} />
+                      <Text className={`text-[13px] font-semibold ${on ? 'text-brand-800' : 'text-slate-600'}`}>{s.name}</Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+          </>
+        ) : (
+          <Input label="City / area" icon="business-outline" placeholder="e.g. Lahore" value={city} onChangeText={setCity} autoComplete="postal-address-locality" />
+        )}
         <Input
           label="Email"
           icon="mail-outline"

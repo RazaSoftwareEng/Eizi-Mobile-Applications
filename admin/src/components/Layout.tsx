@@ -1,5 +1,5 @@
 import {
-  BriefcaseBusiness,
+  Map as MapIcon,
   CalendarCheck,
   LayoutDashboard,
   Layers,
@@ -22,8 +22,8 @@ const NAV: { to: string; label: string; icon: LucideIcon; hint: string }[] = [
   { to: '/admin', label: 'Dashboard', icon: LayoutDashboard, hint: 'Today at a glance' },
   { to: '/admin/users', label: 'Users', icon: Users, hint: 'Customers & providers' },
   { to: '/admin/services', label: 'Services', icon: Layers, hint: 'Categories' },
-  { to: '/admin/listings', label: 'Provider listings', icon: BriefcaseBusiness, hint: 'Who offers what' },
   { to: '/admin/bookings', label: 'Bookings', icon: CalendarCheck, hint: 'All orders' },
+  { to: '/admin/map', label: 'Live map', icon: MapIcon, hint: 'Online workers & open requests' },
   { to: '/admin/wallet', label: 'Wallet', icon: Wallet, hint: 'Top-ups, withdrawals & balances' },
   { to: '/admin/messages', label: 'Messages', icon: Inbox, hint: 'From the website contact form' },
 ]
@@ -41,7 +41,7 @@ export function Layout() {
   const sidebar = (
     <div className="flex h-full flex-col bg-brand-950 text-white">
       <div className="flex items-center gap-3 px-5 py-5">
-        <div className="flex size-10 items-center justify-center rounded-xl bg-white text-lg font-black text-brand-700 shadow-lg">E</div>
+        <img src="/favicon.png" alt="" className="size-11 rounded-xl shadow-lg" />
         <div>
           <p className="text-lg leading-tight font-extrabold tracking-tight">Eizi</p>
           <p className="flex items-center gap-1 text-[11px] font-semibold tracking-wider text-brand-300 uppercase">

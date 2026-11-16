@@ -1,4 +1,4 @@
-import { CircleCheck, ImagePlus, Layers, Loader2, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react'
+import { CircleCheck, Eye, EyeOff, ImagePlus, Layers, ListChecks, Loader2, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
 import { useToast } from '../components/Toast'
@@ -20,10 +20,10 @@ import { formatPrice } from '../lib/format'
 import { formatBytes, optimizeToWebp, type OptimizedImage } from '../lib/imageOptimize'
 import { resolveIcon, SERVICE_ICONS } from '../lib/serviceIcons'
 import { supabase } from '../lib/supabase'
-import type { Service } from '../lib/types'
+import type { Service, ServiceTask } from '../lib/types'
 import { must, useLoad } from '../lib/useLoad'
 
-type ServiceRow = Service & { listings: number; active: number; bookings: number; from: number | null }
+type ServiceRow = Service & { tasks: ServiceTask[]; workers: number; bookings: number }
 
 const BUCKET = 'service-images'
 
@@ -35,22 +35,18 @@ function storagePath(url: string | null | undefined) {
 }
 
 async function loadServices(): Promise<ServiceRow[]> {
-  const [services, listings, bookings] = await Promise.all([
-    supabase.from('services').select('*').order('name').then((r) => must(r) as Service[]),
-    supabase.from('provider_services').select('service_id, is_active, hourly_rate').then((r) => must(r) as { service_id: number; is_active: boolean; hourly_rate: number }[]),
+  const [services, tasks, workers, bookings] = await Promise.all([
+    supabase.from('services').select('*').order('is_active', { ascending: false }).order('sort').order('name').then((r) => must(r) as Service[]),
+    supabase.from('service_tasks').select('*').order('sort').order('id').then((r) => must(r) as ServiceTask[]),
+    supabase.from('profiles').select('service_id').eq('role', 'provider').then((r) => must(r) as { service_id: number | null }[]),
     supabase.from('bookings').select('service_id').then((r) => must(r) as { service_id: number }[]),
   ])
-  return services.map((s) => {
-    const mine = listings.filter((l) => l.service_id === s.id)
-    const active = mine.filter((l) => l.is_active)
-    return {
-      ...s,
-      listings: mine.length,
-      active: active.length,
-      bookings: bookings.filter((b) => b.service_id === s.id).length,
-      from: active.length ? Math.min(...active.map((l) => Number(l.hourly_rate))) : null,
-    }
-  })
+  return services.map((s) => ({
+    ...s,
+    tasks: tasks.filter((t) => t.service_id === s.id),
+    workers: workers.filter((w) => w.service_id === s.id).length,
+    bookings: bookings.filter((b) => b.service_id === s.id).length,
+  }))
 }
 
 export function Services() {
@@ -59,6 +55,14 @@ export function Services() {
   const [query, setQuery] = useState('')
   const [editing, setEditing] = useState<Service | 'new' | null>(null)
   const [deleting, setDeleting] = useState<ServiceRow | null>(null)
+  const [tasksFor, setTasksFor] = useState<ServiceRow | null>(null)
+
+  async function toggleActive(s: ServiceRow) {
+    const { error } = await supabase.from('services').update({ is_active: !s.is_active }).eq('id', s.id)
+    if (error) return toast.error(error.message)
+    toast.success(s.is_active ? `${s.name} is hidden from the app` : `${s.name} is live`)
+    reload()
+  }
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -70,7 +74,7 @@ export function Services() {
     if (error) {
       toast.error(
         error.code === '23503'
-          ? `“${s.name}” has bookings, so it can’t be deleted. Rename it or remove its listings instead.`
+          ? `“${s.name}” has bookings, so it can’t be deleted. Hide it instead.`
           : error.message,
       )
       return
@@ -84,7 +88,7 @@ export function Services() {
     <>
       <PageHeader
         title="Services"
-        subtitle="The categories customers can book in the app."
+        subtitle="Categories, their sub-services and the base visiting fee customers see before requesting."
         actions={
           <>
             <Button variant="secondary" icon={RefreshCw} onClick={reload} loading={loading && !!data}>
@@ -113,7 +117,7 @@ export function Services() {
           {visible.map((s) => {
             const { Icon } = resolveIcon(s)
             return (
-              <Card key={s.id} className="flex flex-col overflow-hidden transition hover:shadow-pop">
+              <Card key={s.id} className={`flex flex-col overflow-hidden transition hover:shadow-pop ${s.is_active ? '' : 'opacity-60'}`}>
                 {s.image_url ? (
                   <img src={s.image_url} alt="" className="h-32 w-full bg-brand-50/60 object-contain p-2" loading="lazy" />
                 ) : (
@@ -132,19 +136,39 @@ export function Services() {
                     <Icon className="size-6" />
                   </span>
                   <div className="min-w-0 flex-1">
-                    <p className="font-bold text-ink">{s.name}</p>
+                    <p className="font-bold text-ink">
+                      {s.name}
+                      {!s.is_active ? <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-500">Hidden</span> : null}
+                    </p>
                     <p className="mt-0.5 line-clamp-2 text-sm text-slate-500">{s.description || 'No description'}</p>
                   </div>
                   <div className="-mt-1 -mr-2 flex">
+                    <IconButton icon={s.is_active ? EyeOff : Eye} label={s.is_active ? 'Hide from app' : 'Show in app'} onClick={() => toggleActive(s)} />
                     <IconButton icon={Pencil} label="Edit service" onClick={() => setEditing(s)} />
                     <IconButton icon={Trash2} label="Delete service" tone="danger" onClick={() => setDeleting(s)} />
                   </div>
                 </div>
-                <div className="mt-auto grid grid-cols-3 gap-2 border-t border-slate-100 pt-4 text-center">
-                  <Metric label="Providers" value={`${s.active}/${s.listings}`} />
+                <button type="button" onClick={() => setTasksFor(s)} className="-mt-1 flex cursor-pointer flex-wrap gap-1.5 text-left" title="Manage sub-services">
+                  {s.tasks.length ? (
+                    s.tasks.slice(0, 5).map((t) => (
+                      <span key={t.id} className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${t.is_active ? 'bg-brand-50 text-brand-800' : 'bg-slate-100 text-slate-400 line-through'}`}>
+                        {t.name}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="text-xs font-semibold text-amber-700">No sub-services yet, customers cannot request this</span>
+                  )}
+                  {s.tasks.length > 5 ? <span className="text-[11px] font-semibold text-slate-500">+{s.tasks.length - 5} more</span> : null}
+                </button>
+                <div className="mt-auto grid grid-cols-4 gap-2 border-t border-slate-100 pt-4 text-center">
+                  <Metric label="Visit fee" value={formatPrice(s.visit_fee)} />
+                  <Metric label="Sub-services" value={String(s.tasks.length)} />
+                  <Metric label="Workers" value={String(s.workers)} />
                   <Metric label="Bookings" value={String(s.bookings)} />
-                  <Metric label="From / hr" value={s.from !== null ? formatPrice(s.from) : '—'} />
                 </div>
+                <Button variant="secondary" icon={ListChecks} onClick={() => setTasksFor(s)}>
+                  Manage sub-services
+                </Button>
                 </div>
               </Card>
             )
@@ -162,6 +186,15 @@ export function Services() {
           }}
         />
       ) : null}
+      {tasksFor ? (
+        <TasksManager
+          service={tasksFor}
+          onClose={() => {
+            setTasksFor(null)
+            reload()
+          }}
+        />
+      ) : null}
       <ConfirmDialog
         open={!!deleting}
         title="Delete this service?"
@@ -169,8 +202,8 @@ export function Services() {
         onConfirm={() => (deleting ? onDelete(deleting) : undefined)}
         message={
           <>
-            <strong className="text-ink">{deleting?.name}</strong> and its {deleting?.listings ?? 0} provider listing(s) will be removed. Services
-            that already have bookings can’t be deleted.
+            <strong className="text-ink">{deleting?.name}</strong> and its {deleting?.tasks.length ?? 0} sub-service(s) will be removed. Services
+            that already have bookings can’t be deleted, hide them instead.
           </>
         }
       />
@@ -192,6 +225,8 @@ function ServiceForm({ service, onClose, onSaved }: { service: Service | null; o
   const [name, setName] = useState(service?.name ?? '')
   const [description, setDescription] = useState(service?.description ?? '')
   const [icon, setIcon] = useState(service ? resolveIcon(service).value : 'toolbox-outline')
+  const [fee, setFee] = useState(String(Math.round(Number(service?.visit_fee ?? 300))))
+  const [sort, setSort] = useState(String(service?.sort ?? 100))
   const [imageUrl, setImageUrl] = useState<string | null>(service?.image_url ?? null)
   const [optimized, setOptimized] = useState<OptimizedImage | null>(null)
   const [optimizing, setOptimizing] = useState(false)
@@ -223,6 +258,8 @@ function ServiceForm({ service, onClose, onSaved }: { service: Service | null; o
 
   async function save() {
     if (!name.trim()) return toast.error('Please enter a service name.')
+    const visit_fee = Number(fee)
+    if (!(visit_fee >= 0) || visit_fee > 100000) return toast.error('Enter a valid visiting fee.')
     setBusy(true)
     try {
       let image_url = imageUrl
@@ -238,7 +275,7 @@ function ServiceForm({ service, onClose, onSaved }: { service: Service | null; o
         }
         image_url = supabase.storage.from(BUCKET).getPublicUrl(path).data.publicUrl
       }
-      const payload = { name: name.trim(), description: description.trim(), icon, image_url }
+      const payload = { name: name.trim(), description: description.trim(), icon, image_url, visit_fee, sort: Number(sort) || 100 }
       const { error } = service
         ? await supabase.from('services').update(payload).eq('id', service.id)
         : await supabase.from('services').insert(payload)
@@ -278,6 +315,10 @@ function ServiceForm({ service, onClose, onSaved }: { service: Service | null; o
     >
       <div className="space-y-4">
         <TextField label="Name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Plumber" />
+        <div className="grid grid-cols-2 gap-3">
+          <TextField label="Base visiting fee (Rs)" type="number" min={0} value={fee} onChange={(e) => setFee(e.target.value)} />
+          <TextField label="Order on home screen" type="number" min={1} value={sort} onChange={(e) => setSort(e.target.value)} />
+        </div>
         <TextArea label="Short description" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What does this service include?" />
 
         <div>
@@ -346,5 +387,124 @@ function ServiceForm({ service, onClose, onSaved }: { service: Service | null; o
         </div>
       </div>
     </Modal>
+  )
+}
+
+/** Add, rename, price, reorder, hide or delete the sub-services of one category. */
+function TasksManager({ service, onClose }: { service: ServiceRow; onClose: () => void }) {
+  const toast = useToast()
+  const [tasks, setTasks] = useState<ServiceTask[]>(service.tasks)
+  const [name, setName] = useState('')
+  const [price, setPrice] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  async function refresh() {
+    const { data } = await supabase.from('service_tasks').select('*').eq('service_id', service.id).order('sort').order('id')
+    setTasks((data as ServiceTask[]) ?? [])
+  }
+
+  async function add() {
+    if (name.trim().length < 2) return toast.error('Enter a sub-service name.')
+    setBusy(true)
+    const { error } = await supabase.from('service_tasks').insert({
+      service_id: service.id,
+      name: name.trim(),
+      base_price: price ? Number(price) : null,
+      sort: (tasks.at(-1)?.sort ?? 0) + 1,
+    })
+    setBusy(false)
+    if (error) return toast.error(error.code === '23505' ? 'This sub-service already exists.' : error.message)
+    setName('')
+    setPrice('')
+    refresh()
+  }
+
+  async function update(t: ServiceTask, patch: Partial<ServiceTask>) {
+    const { error } = await supabase.from('service_tasks').update(patch).eq('id', t.id)
+    if (error) return toast.error(error.code === '23505' ? 'This name is already used.' : error.message)
+    refresh()
+  }
+
+  async function remove(t: ServiceTask) {
+    const { error } = await supabase.from('service_tasks').delete().eq('id', t.id)
+    if (error) return toast.error(error.message)
+    refresh()
+  }
+
+  async function move(i: number, dir: -1 | 1) {
+    const a = tasks[i]
+    const b = tasks[i + dir]
+    if (!a || !b) return
+    await supabase.from('service_tasks').update({ sort: b.sort === a.sort ? a.sort + dir : b.sort }).eq('id', a.id)
+    await supabase.from('service_tasks').update({ sort: a.sort }).eq('id', b.id)
+    refresh()
+  }
+
+  return (
+    <Modal
+      open
+      title={`${service.name}: sub-services`}
+      subtitle="Customers tick these when requesting. Old bookings keep the names they had."
+      onClose={onClose}
+      width="max-w-2xl"
+      footer={<Button onClick={onClose}>Done</Button>}
+    >
+      <div className="space-y-2">
+        {tasks.length === 0 ? (
+          <p className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800">No sub-services yet. Add at least one so customers can request this category.</p>
+        ) : null}
+        {tasks.map((t, i) => (
+          <TaskRow key={`${t.id}-${t.name}-${t.base_price}`} t={t} first={i === 0} last={i === tasks.length - 1} onUpdate={(p) => update(t, p)} onDelete={() => remove(t)} onMove={(d) => move(i, d)} />
+        ))}
+      </div>
+      <div className="mt-5 grid gap-3 rounded-2xl border border-dashed border-slate-300 p-4 sm:grid-cols-[1fr_140px_auto] sm:items-end">
+        <TextField label="New sub-service" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Geyser Repair" />
+        <TextField label="From price (optional)" type="number" min={0} value={price} onChange={(e) => setPrice(e.target.value)} placeholder="Rs" />
+        <Button icon={Plus} onClick={add} loading={busy}>
+          Add
+        </Button>
+      </div>
+    </Modal>
+  )
+}
+
+function TaskRow({ t, first, last, onUpdate, onDelete, onMove }: {
+  t: ServiceTask
+  first: boolean
+  last: boolean
+  onUpdate: (p: Partial<ServiceTask>) => void
+  onDelete: () => void
+  onMove: (d: -1 | 1) => void
+}) {
+  const [name, setName] = useState(t.name)
+  const [price, setPrice] = useState(t.base_price != null ? String(Math.round(Number(t.base_price))) : '')
+  const changed = name.trim() !== t.name || (price ? Number(price) : null) !== (t.base_price != null ? Number(t.base_price) : null)
+  return (
+    <div className={`flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 p-2 ${t.is_active ? '' : 'bg-slate-50 opacity-70'}`}>
+      <div className="flex flex-col">
+        <button type="button" disabled={first} onClick={() => onMove(-1)} className="cursor-pointer px-1 text-xs text-slate-400 hover:text-ink disabled:opacity-30" aria-label="Move up">
+          ▲
+        </button>
+        <button type="button" disabled={last} onClick={() => onMove(1)} className="cursor-pointer px-1 text-xs text-slate-400 hover:text-ink disabled:opacity-30" aria-label="Move down">
+          ▼
+        </button>
+      </div>
+      <input
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        className="min-w-40 flex-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm text-ink outline-none focus:border-brand-500"
+        aria-label="Sub-service name"
+      />
+      <input
+        value={price}
+        onChange={(e) => setPrice(e.target.value.replace(/[^\d]/g, ''))}
+        placeholder="From Rs"
+        className="w-24 rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm text-ink outline-none focus:border-brand-500"
+        aria-label="From price"
+      />
+      {changed ? <Button onClick={() => onUpdate({ name: name.trim(), base_price: price ? Number(price) : null })}>Save</Button> : null}
+      <IconButton icon={t.is_active ? EyeOff : Eye} label={t.is_active ? 'Hide' : 'Show'} onClick={() => onUpdate({ is_active: !t.is_active })} />
+      <IconButton icon={Trash2} label="Delete" tone="danger" onClick={onDelete} />
+    </div>
   )
 }

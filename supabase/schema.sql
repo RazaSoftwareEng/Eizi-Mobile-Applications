@@ -36,6 +36,11 @@ do $$ begin
     check (avatar_url is null or position('/storage/v1/object/public/avatars/' || id::text || '/' in avatar_url) > 0);
 exception when duplicate_object then null; end $$;
 
+-- City / area (customers), the provider's work category, and the provider's rating (kept up to date by rate_booking()).
+alter table public.profiles add column if not exists city text not null default '';
+alter table public.profiles add column if not exists rating_avg numeric(3, 2) not null default 0;
+alter table public.profiles add column if not exists rating_count int not null default 0;
+
 -- Auto-create a profile whenever someone signs up
 create or replace function public.handle_new_user()
 returns trigger
@@ -43,15 +48,29 @@ language plpgsql
 security definer set search_path = ''
 as $$
 declare
-  meta_role text := new.raw_user_meta_data ->> 'role';
+  meta      jsonb := coalesce(new.raw_user_meta_data, '{}'::jsonb);
+  meta_role text := meta ->> 'role';
+  v_service bigint;
+  v_cnic    text := regexp_replace(coalesce(meta ->> 'cnic', ''), '\D', '', 'g');
 begin
-  insert into public.profiles (id, full_name, phone, role)
+  insert into public.profiles (id, full_name, phone, role, city)
   values (
     new.id,
-    coalesce(new.raw_user_meta_data ->> 'full_name', ''),
-    new.raw_user_meta_data ->> 'phone',
-    case when meta_role in ('customer', 'provider') then meta_role::public.user_role end
+    left(coalesce(meta ->> 'full_name', ''), 120),
+    meta ->> 'phone',
+    case when meta_role in ('customer', 'provider') then meta_role::public.user_role end,
+    left(btrim(coalesce(meta ->> 'city', '')), 80)
   );
+
+  if meta_role = 'provider' then
+    if (meta ->> 'service_id') ~ '^\d+$' then
+      select id into v_service from public.services where id = (meta ->> 'service_id')::bigint and is_active;
+    end if;
+    update public.profiles set service_id = v_service where id = new.id;
+    if length(v_cnic) = 13 then
+      insert into public.provider_kyc (user_id, cnic) values (new.id, v_cnic) on conflict do nothing;
+    end if;
+  end if;
   return new;
 end;
 $$;
@@ -86,6 +105,46 @@ create table if not exists public.services (
 
 -- Optional cover photo shown on the app's service cards (uploaded from the admin portal).
 alter table public.services add column if not exists image_url text;
+
+-- Base visiting fee for the category (set by admins). The customer sees it before requesting;
+-- the worker's final quote can't be lower — the fee is adjusted against the final service cost.
+alter table public.services add column if not exists visit_fee numeric(10, 2) not null default 300;
+alter table public.services add column if not exists sort int not null default 100;
+alter table public.services add column if not exists is_active boolean not null default true;
+do $$ begin
+  alter table public.services add constraint services_visit_fee_check check (visit_fee >= 0 and visit_fee <= 100000);
+exception when duplicate_object then null; end $$;
+
+-- ---------- Sub-services: the specific jobs a customer ticks (Fan Fitting, Washroom Deep Cleaning …) ----------
+create table if not exists public.service_tasks (
+  id          bigint generated always as identity primary key,
+  service_id  bigint not null references public.services (id) on delete cascade,
+  name        text not null check (length(btrim(name)) between 2 and 80),
+  base_price  numeric(10, 2) check (base_price is null or base_price >= 0),   -- optional "from" price, shown as a guide
+  sort        int not null default 100,
+  is_active   boolean not null default true,
+  unique (service_id, name)
+);
+create index if not exists service_tasks_service_idx on public.service_tasks (service_id, sort);
+
+-- Provider's work category (chosen at sign-up).
+alter table public.profiles add column if not exists service_id bigint references public.services (id) on delete set null;
+
+-- Private provider details: CNIC. Only the provider and admins can read it.
+create table if not exists public.provider_kyc (
+  user_id     uuid primary key references public.profiles (id) on delete cascade,
+  cnic        text not null unique check (cnic ~ '^\d{13}$'),
+  created_at  timestamptz not null default now()
+);
+
+-- Provider availability + last known position (private: own row + admins). Written only via set_availability().
+create table if not exists public.provider_presence (
+  user_id     uuid primary key references public.profiles (id) on delete cascade,
+  is_online   boolean not null default false,
+  latitude    double precision check (latitude between -90 and 90),
+  longitude   double precision check (longitude between -180 and 180),
+  updated_at  timestamptz not null default now()
+);
 
 -- ---------- What each provider offers + their hourly price ----------
 create table if not exists public.provider_services (
@@ -156,6 +215,33 @@ do $$ begin
       and latitude between -90 and 90 and longitude between -180 and 180)
   );
 exception when duplicate_object then null; end $$;
+
+-- ---------- On-demand request flow ----------
+--   customer picks a category + ticks sub-services → request goes to nearby ONLINE workers of that category
+--   first worker to accept gets it → visits → sends a quote → customer approves (cash or wallet) → completed → rating
+-- The worker is unknown until someone accepts, so the first-version columns become optional.
+alter table public.bookings alter column provider_id drop not null;
+alter table public.bookings alter column provider_service_id drop not null;
+alter table public.bookings alter column hourly_rate drop not null;
+alter table public.bookings alter column hours drop not null;
+alter table public.bookings add column if not exists task_ids     bigint[] not null default '{}';
+alter table public.bookings add column if not exists tasks        jsonb not null default '[]';   -- names at booking time
+alter table public.bookings add column if not exists visit_fee    numeric(10, 2) not null default 0;
+alter table public.bookings add column if not exists quote_amount numeric(10, 2);
+alter table public.bookings add column if not exists quote_note   text not null default '';
+alter table public.bookings add column if not exists quote_status text not null default 'none';
+alter table public.bookings add column if not exists accepted_at  timestamptz;
+alter table public.bookings add column if not exists quoted_at    timestamptz;
+alter table public.bookings add column if not exists completed_at timestamptz;
+alter table public.bookings add column if not exists rating       smallint;
+alter table public.bookings add column if not exists review       text not null default '';
+do $$ begin
+  alter table public.bookings add constraint bookings_quote_status_check check (quote_status in ('none', 'sent', 'approved', 'declined'));
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter table public.bookings add constraint bookings_rating_check check (rating is null or rating between 1 and 5);
+exception when duplicate_object then null; end $$;
+create index if not exists bookings_open_idx on public.bookings (service_id, created_at desc) where status = 'pending' and provider_id is null;
 
 create table if not exists public.wallets (
   user_id     uuid primary key references public.profiles (id) on delete cascade,
@@ -239,31 +325,63 @@ end;
 $$;
 revoke all on function public.wallet_apply(uuid, numeric, public.wallet_tx_type, bigint, bigint, text) from public, anon, authenticated;
 
--- Price is ALWAYS computed on the server from the provider's current rate,
--- so a customer can never send a fake total from the app.
+-- A new request: everything that matters is decided on the server, never trusted from the app —
+-- the category's visiting fee, the sub-service names, who the worker is (nobody yet) and the payment state.
 create or replace function public.bookings_before_insert()
 returns trigger
 language plpgsql
 security definer set search_path = ''
 as $$
 declare
-  ps public.provider_services;
+  svc public.services;
+  v_tasks jsonb;
+  v_count int;
 begin
-  select * into ps from public.provider_services where id = new.provider_service_id;
-  if ps.id is null or not ps.is_active then
+  if not exists (select 1 from public.profiles where id = new.customer_id and role = 'customer') then
+    raise exception 'Only customer accounts can request services';
+  end if;
+  select * into svc from public.services where id = new.service_id;
+  if svc.id is null or not svc.is_active then
     raise exception 'This service is not available';
   end if;
-  if ps.provider_id = new.customer_id then
-    raise exception 'You cannot book your own service';
+
+  new.task_ids := array(select distinct unnest(coalesce(new.task_ids, '{}')));
+  select jsonb_agg(jsonb_build_object('id', t.id, 'name', t.name) order by t.sort, t.id), count(*)
+    into v_tasks, v_count
+  from public.service_tasks t
+  where t.id = any (new.task_ids) and t.service_id = svc.id and t.is_active;
+  if coalesce(v_count, 0) = 0 or v_count <> cardinality(new.task_ids) then
+    raise exception 'Please select at least one task from this service';
+  end if;
+  if length(btrim(coalesce(new.address, ''))) < 3 then
+    raise exception 'Please add your address';
+  end if;
+  if (select count(*) from public.bookings where customer_id = new.customer_id and status = 'pending') >= 3 then
+    raise exception 'You already have 3 open requests. Please wait for a worker or cancel one first.';
   end if;
 
-  new.provider_id    := ps.provider_id;
-  new.service_id     := ps.service_id;
-  new.hourly_rate    := ps.hourly_rate;
-  new.total_price    := ps.hourly_rate * new.hours;
+  new.tasks          := v_tasks;
+  new.visit_fee      := svc.visit_fee;
+  new.total_price    := svc.visit_fee;     -- becomes the agreed quote once the customer approves it
+  new.provider_id    := null;
+  new.provider_service_id := null;
+  new.hourly_rate    := null;
+  new.hours          := null;
+  new.scheduled_at   := greatest(coalesce(new.scheduled_at, now()), now() - interval '5 minutes');
   new.status         := 'pending';
-  new.payment_method := coalesce(new.payment_method, 'cash');
-  new.payment_status := case when new.payment_method = 'wallet' then 'held' else 'unpaid' end;
+  new.quote_amount   := null;
+  new.quote_note     := '';
+  new.quote_status   := 'none';
+  new.accepted_at    := null;
+  new.quoted_at      := null;
+  new.completed_at   := null;
+  new.rating         := null;
+  new.review         := '';
+  new.payment_method := 'cash';           -- chosen when the customer approves the quote
+  new.payment_status := 'unpaid';
+  new.notes          := left(coalesce(new.notes, ''), 500);
+  new.address        := left(btrim(new.address), 300);
+  new.created_at     := now();
   return new;
 end;
 $$;
@@ -273,36 +391,22 @@ create trigger bookings_before_insert
   before insert on public.bookings
   for each row execute function public.bookings_before_insert();
 
--- Wallet payment: take the money right away (held by Eizi). Not enough balance → the whole booking is rejected.
-create or replace function public.bookings_after_insert()
-returns trigger
-language plpgsql
-security definer set search_path = ''
-as $$
-begin
-  if new.payment_method = 'wallet' then
-    perform public.wallet_apply(new.customer_id, -new.total_price, 'booking_payment', new.id, null, 'Booking #' || new.id);
-  end if;
-  return null;
-end;
-$$;
-
+-- (First version took wallet money at booking time; now money is only held when a quote is approved.)
 drop trigger if exists bookings_after_insert on public.bookings;
-create trigger bookings_after_insert
-  after insert on public.bookings
-  for each row execute function public.bookings_after_insert();
+drop function if exists public.bookings_after_insert();
 
--- Only status may change after booking, and only through allowed transitions:
---   customer : pending/accepted → cancelled
---   provider : pending → accepted | rejected,  accepted → completed
--- Held wallet money follows the status: completed → provider is paid; cancelled/rejected → customer refunded.
+-- Bookings change ONLY through the request functions below (accept_booking, send_quote, …) or by admins.
+-- Those functions mark the transaction as trusted; anything else is refused.
+-- Held wallet money always follows the status: completed → worker is paid; cancelled → customer refunded.
 create or replace function public.bookings_before_update()
 returns trigger
 language plpgsql
 security definer set search_path = ''
 as $$
 begin
-  if public.is_admin() then
+  if current_setting('eizi.booking_rpc', true) = 'on' then
+    null;  -- trusted request function (it already checked who may do what)
+  elsif public.is_admin() then
     -- Admins may correct details, but never the payment fields, and not the money side of a wallet-paid booking.
     new.payment_method := old.payment_method;
     new.payment_status := old.payment_status;
@@ -314,31 +418,13 @@ begin
       raise exception 'The wallet payment for this booking is already settled, so its status can no longer change.';
     end if;
   else
-    if (new.customer_id, new.provider_id, new.provider_service_id, new.service_id, new.hours,
-        new.hourly_rate, new.total_price, new.scheduled_at, new.address, new.notes, new.created_at,
-        new.payment_method, new.payment_status, new.latitude, new.longitude)
-       is distinct from
-       (old.customer_id, old.provider_id, old.provider_service_id, old.service_id, old.hours,
-        old.hourly_rate, old.total_price, old.scheduled_at, old.address, old.notes, old.created_at,
-        old.payment_method, old.payment_status, old.latitude, old.longitude)
-    then
-      raise exception 'Only the booking status can be changed';
-    end if;
-
-    if new.status is distinct from old.status and not (
-         (auth.uid() = old.customer_id and old.status in ('pending', 'accepted') and new.status = 'cancelled') or
-         (auth.uid() = old.provider_id and (
-            (old.status = 'pending'  and new.status in ('accepted', 'rejected')) or
-            (old.status = 'accepted' and new.status = 'completed')))
-       ) then
-      raise exception 'Cannot change booking from % to %', old.status, new.status;
-    end if;
+    raise exception 'Bookings can only be changed through the app actions';
   end if;
 
   -- Move held wallet money
   if new.status is distinct from old.status and old.payment_status = 'held' then
     if new.status = 'completed' then
-      perform public.wallet_apply(old.provider_id, old.total_price, 'booking_earning', old.id, null, 'Earning · booking #' || old.id);
+      perform public.wallet_apply(new.provider_id, old.total_price, 'booking_earning', old.id, null, 'Earning · booking #' || old.id);
       new.payment_status := 'released';
     elsif new.status in ('cancelled', 'rejected') then
       perform public.wallet_apply(old.customer_id, old.total_price, 'booking_refund', old.id, null, 'Refund · booking #' || old.id);
@@ -548,11 +634,8 @@ create policy "customers create bookings" on public.bookings
   for insert to authenticated
   with check (customer_id = auth.uid());
 
+-- No direct updates: customers and workers change bookings only through the request functions.
 drop policy if exists "parties update their bookings" on public.bookings;
-create policy "parties update their bookings" on public.bookings
-  for update to authenticated
-  using (customer_id = auth.uid() or provider_id = auth.uid())
-  with check (customer_id = auth.uid() or provider_id = auth.uid());
 
 -- ---------- Admin access (admin portal) ----------
 alter table public.admins enable row level security;
@@ -626,21 +709,51 @@ grant select, insert, update, delete on public.profiles to authenticated;   -- d
 grant select, insert, update, delete on public.provider_services to authenticated;
 grant select, insert, update, delete on public.bookings to authenticated;   -- delete: RLS admins only
 
--- ---------- Seed: service categories ----------
-insert into public.services (name, icon, description) values
-  ('Dishwasher',     'dishwasher', 'Dishes washed, kitchen sink cleared'),
-  ('Cook',           'chef-hat', 'Home-cooked meals prepared in your kitchen'),
-  ('Electrician',    'flash', 'Wiring, switches, fans, lights and repairs'),
-  ('Plumber',        'pipe-wrench', 'Leaks, taps, drains and fittings'),
-  ('House Cleaner',  'broom', 'Sweeping, mopping, dusting and tidying'),
-  ('Carpenter',      'saw-blade', 'Furniture repair, doors and woodwork'),
-  ('Painter',        'format-paint', 'Walls, doors and touch-ups'),
-  ('AC Technician',  'air-conditioner', 'AC service, gas refill and repair'),
-  ('Laundry',        'washing-machine', 'Washing, drying and ironing clothes'),
-  ('Babysitter',     'baby-face-outline', 'Trusted childcare at home'),
-  ('Driver',         'car-outline', 'Personal driver for your own car'),
-  ('Gardener',       'flower-outline', 'Lawn, plants and garden upkeep')
-on conflict (name) do update set icon = excluded.icon;
+-- ---------- Seed: the 5 service categories + their sub-services ----------
+-- Re-running never overwrites what admins changed later (visit fee, names, prices), it only adds what's missing.
+insert into public.services (name, icon, description, sort, visit_fee) values
+  ('Cleaning Services',      'broom',           'Sweeping, mopping, dusting, washrooms and kitchen scrubbing', 1, 300),
+  ('Cooking & Kitchen Help', 'chef-hat',        'Daily meals, chopping, aata kneading and kitchen wiping',     2, 300),
+  ('Electrician Services',   'flash',           'Switchboards, fans, lights, UPS wiring and DB box checks',    3, 300),
+  ('Laundry Support',        'washing-machine', 'Ironing, washing, delicates and wardrobe organizing',         4, 300),
+  ('Dishwashing & Utensils', 'dishwasher',      'Daily dishes, party pots and sink sanitization',              5, 300)
+on conflict (name) do update set sort = excluded.sort, is_active = true;
+
+-- Categories from the first version of the app stay for old bookings, but are hidden from new requests.
+update public.services set is_active = false
+where is_active
+  and name in ('Dishwasher', 'Cook', 'Electrician', 'Plumber', 'House Cleaner', 'Carpenter', 'Painter',
+               'AC Technician', 'Laundry', 'Babysitter', 'Driver', 'Gardener')
+  and not exists (select 1 from public.service_tasks t where t.service_id = services.id);
+
+insert into public.service_tasks (service_id, name, sort)
+select s.id, t.name, t.sort
+from (values
+  ('Cleaning Services',      'Full Room Sweeping & Mopping',               1),
+  ('Cleaning Services',      'Dusting & Furniture Wiping',                 2),
+  ('Cleaning Services',      'Washroom Deep Cleaning',                     3),
+  ('Cleaning Services',      'Kitchen Slab & Tile Scrubbing',              4),
+  ('Cleaning Services',      'Balcony & Yard Sweeping',                    5),
+  ('Cooking & Kitchen Help', 'Daily Meal Prep (Breakfast / Lunch / Dinner)', 1),
+  ('Cooking & Kitchen Help', 'Vegetable Chopping & Peeling',               2),
+  ('Cooking & Kitchen Help', 'Aata Kneading (Dough Prep)',                 3),
+  ('Cooking & Kitchen Help', 'Post-Cooking Kitchen Wiping',                4),
+  ('Electrician Services',   'Switchboard & Socket Repair',                1),
+  ('Electrician Services',   'Fan Fitting & Repair',                       2),
+  ('Electrician Services',   'Light Fixture Installation',                 3),
+  ('Electrician Services',   'UPS & Battery Wiring Check',                 4),
+  ('Electrician Services',   'Breaker & Main DB Box Diagnosis',            5),
+  ('Laundry Support',        'Clothes Ironing & Folding',                  1),
+  ('Laundry Support',        'Heavy Ironing (Suits / Formal Wear)',        2),
+  ('Laundry Support',        'Machine Washing Assistance',                 3),
+  ('Laundry Support',        'Hand Washing (Delicates)',                   4),
+  ('Laundry Support',        'Wardrobe Organizing',                        5),
+  ('Dishwashing & Utensils', 'Daily Routine Utensil Washing',              1),
+  ('Dishwashing & Utensils', 'Heavy Event / Party Pot Cleaning',           2),
+  ('Dishwashing & Utensils', 'Sink & Counter Sanitization',                3)
+) as t(service, name, sort)
+join public.services s on s.name = t.service
+on conflict (service_id, name) do nothing;
 
 -- ---------- Storage: service cover photos ----------
 -- Public bucket (anyone can view the photos in the app); only admins can upload, replace or delete.
@@ -852,77 +965,133 @@ immutable
 set search_path = ''
 as $$ select 'Rs ' || to_char(round(amount), 'FM999,999,999,990') $$;
 
--- New booking → provider.  Status change → whoever didn't make the change.
+-- "Fan Fitting & Repair, Switchboard & Socket Repair + 1 more"
+create or replace function public.eizi_tasks_summary(tasks jsonb)
+returns text
+language sql
+immutable
+set search_path = ''
+as $$
+  select coalesce(
+    (select string_agg(t ->> 'name', ', ') from (select t from jsonb_array_elements(tasks) with ordinality as x(t, n) where n <= 2) s), '')
+    || case when jsonb_array_length(coalesce(tasks, '[]'::jsonb)) > 2
+            then ' + ' || (jsonb_array_length(tasks) - 2) || ' more' else '' end
+$$;
+
+-- Every step of a request tells the other side, with sound:
+--   new request        → nearby online workers of that category
+--   accepted           → customer (cheerful "confirmed" chime)
+--   handed back        → customer ("finding another worker")
+--   quote sent         → customer      quote approved / declined → worker
+--   completed          → customer (please rate) + worker (wallet payment received)
+--   cancelled          → the side that didn't cancel
 create or replace function public.bookings_notify()
 returns trigger
 language plpgsql
 security definer set search_path = ''
 as $$
 declare
-  svc  text;
-  cust text;
-  prov text;
+  svc   text;
+  cust  text;
   first text;
+  prov  text;
+  jobs  text;
+  w     record;
+  dist  text;
 begin
   select name into svc from public.services where id = new.service_id;
-  select coalesce(nullif(full_name, ''), 'A customer') into cust from public.profiles where id = new.customer_id;
-  select coalesce(nullif(full_name, ''), 'Your provider') into prov from public.profiles where id = new.provider_id;
-  svc := coalesce(svc, 'a service');
-  select split_part(btrim(coalesce(full_name, '')), ' ', 1) into first from public.profiles where id = new.customer_id;
+  svc := coalesce(svc, 'your service');
+  select coalesce(nullif(btrim(full_name), ''), 'A customer'), split_part(btrim(coalesce(full_name, '')), ' ', 1)
+    into cust, first from public.profiles where id = new.customer_id;
+  select coalesce(nullif(btrim(full_name), ''), 'Your worker') into prov from public.profiles where id = new.provider_id;
+  prov := coalesce(prov, 'Your worker');
+  jobs := public.eizi_tasks_summary(new.tasks);
 
+  -- New request → every nearby online worker in that category
   if tg_op = 'INSERT' then
-    perform public.notify_user(new.provider_id, 'New booking request',
-      cust || ' booked ' || svc || ' · ' || new.hours || ' hr · ' || public.eizi_when(new.scheduled_at)
-        || case when new.payment_method = 'wallet' then ' · prepaid ' || public.eizi_rs(new.total_price) else '' end,
-      jsonb_build_object('url', '/provider', 'booking_id', new.id));
+    for w in
+      select p.id,
+             case when new.latitude is null or pr.latitude is null then null
+                  else public.km_between(pr.latitude, pr.longitude, new.latitude, new.longitude) end as km
+      from public.profiles p
+      join public.provider_presence pr on pr.user_id = p.id and pr.is_online
+      where p.role = 'provider' and p.service_id = new.service_id and p.id <> new.customer_id
+    loop
+      continue when w.km is not null and w.km > public.request_radius_km();
+      dist := case when w.km is null then '' else ' · ' || round(w.km::numeric, 1) || ' km away' end;
+      perform public.notify_user(w.id, 'New job nearby · ' || svc,
+        coalesce(nullif(first, ''), 'A customer') || ' needs ' || jobs || dist || '. Visiting fee ' || public.eizi_rs(new.visit_fee) || '. Tap to accept.',
+        jsonb_build_object('url', '/provider', 'booking_id', new.id));
+    end loop;
     return new;
+  end if;
+
+  -- Worker accepted
+  if old.status = 'pending' and new.status = 'accepted' and new.provider_id is not null then
+    perform public.notify_user(new.customer_id,
+      case when coalesce(first, '') <> '' then 'Great news, ' || first || '! ' || prov || ' accepted your request'
+           else 'Great news! ' || prov || ' accepted your request' end,
+      prov || ' is coming for ' || jobs || '. They will check the work and send you a price before starting. '
+        || 'Visiting fee ' || public.eizi_rs(new.visit_fee) || ' is adjusted in the final price. Tap to call them.',
+      jsonb_build_object('url', '/customer/bookings', 'booking_id', new.id),
+      'confirmed');
+    return new;
+  end if;
+
+  -- Worker handed it back
+  if old.status = 'accepted' and new.status = 'pending' then
+    perform public.notify_user(new.customer_id, 'Finding another worker',
+      'Your ' || svc || ' request is back with nearby workers. We will tell you as soon as someone accepts.',
+      jsonb_build_object('url', '/customer/bookings', 'booking_id', new.id));
+    return new;
+  end if;
+
+  -- Quote
+  if new.quote_status is distinct from old.quote_status or (new.quote_status = 'sent' and new.quote_amount is distinct from old.quote_amount) then
+    if new.quote_status = 'sent' then
+      perform public.notify_user(new.customer_id, 'Price for your job: ' || public.eizi_rs(new.quote_amount),
+        prov || ' checked the work and quoted ' || public.eizi_rs(new.quote_amount) || ' for ' || jobs || '. Tap to approve or decline.',
+        jsonb_build_object('url', '/customer/bookings', 'booking_id', new.id));
+    elsif new.quote_status = 'approved' then
+      perform public.notify_user(new.provider_id, 'Price approved · start the work',
+        cust || ' approved ' || public.eizi_rs(new.total_price)
+          || case when new.payment_status = 'held' then ', paid from wallet and held safely until you mark it completed.'
+                  else '. Collect cash after the job.' end,
+        jsonb_build_object('url', '/provider', 'booking_id', new.id),
+        'confirmed');
+    elsif new.quote_status = 'declined' then
+      perform public.notify_user(new.provider_id, 'Price declined',
+        cust || ' declined ' || public.eizi_rs(new.quote_amount) || '. Send a new price, or complete for the visiting fee ' || public.eizi_rs(new.visit_fee) || '.',
+        jsonb_build_object('url', '/provider', 'booking_id', new.id));
+    end if;
   end if;
 
   if new.status is not distinct from old.status then
     return new;
   end if;
 
-  case new.status
-    when 'accepted' then
-      -- The moment that builds trust: who is coming, when, and that the money is safe.
-      perform public.notify_user(new.customer_id,
-        case when coalesce(first, '') <> '' then 'Great news, ' || first || '! Your booking is confirmed' else 'Great news! Your booking is confirmed' end,
-        prov || ' will be there on ' || public.eizi_when(new.scheduled_at) || ' for ' || svc || ' (' || new.hours || ' hr). '
-          || case when new.payment_status = 'held'
-                  then 'Your ' || public.eizi_rs(new.total_price) || ' stays safe with Eizi until the job is done.'
-                  else 'Pay ' || public.eizi_rs(new.total_price) || ' only after the work is done.' end
-          || ' Tap to see details or call them.',
-        jsonb_build_object('url', '/customer/bookings', 'booking_id', new.id),
-        'confirmed');
-    when 'rejected' then
-      perform public.notify_user(new.customer_id, 'Booking declined',
-        prov || ' can' || chr(39) || 't take your ' || svc || ' booking.'
-          || case when new.payment_status = 'refunded' then ' ' || public.eizi_rs(new.total_price) || ' is back in your wallet.' else ' Try another provider.' end,
+  if new.status = 'completed' then
+    perform public.notify_user(new.customer_id, 'Job completed',
+      'Thanks for using Eizi! How was ' || prov || '? Tap to rate, it helps other families choose.',
+      jsonb_build_object('url', '/customer/bookings', 'booking_id', new.id));
+    if new.payment_status = 'released' then
+      perform public.notify_user(new.provider_id, 'Payment received',
+        public.eizi_rs(new.total_price) || ' for booking #' || new.id || ' was added to your wallet.',
+        jsonb_build_object('url', '/provider/wallet', 'booking_id', new.id));
+    end if;
+  elsif new.status in ('cancelled', 'rejected') then
+    if new.provider_id is not null and auth.uid() is distinct from new.provider_id then
+      perform public.notify_user(new.provider_id, 'Booking cancelled',
+        cust || ' cancelled ' || svc || ' (' || jobs || ').',
+        jsonb_build_object('url', '/provider', 'booking_id', new.id));
+    end if;
+    if auth.uid() is distinct from new.customer_id then
+      perform public.notify_user(new.customer_id, 'Booking cancelled',
+        'Your ' || svc || ' booking was cancelled.'
+          || case when new.payment_status = 'refunded' then ' ' || public.eizi_rs(new.total_price) || ' is back in your wallet.' else '' end,
         jsonb_build_object('url', '/customer/bookings', 'booking_id', new.id));
-    when 'completed' then
-      perform public.notify_user(new.customer_id, 'Job completed',
-        'Your ' || svc || ' booking is done. Thanks for using Eizi!',
-        jsonb_build_object('url', '/customer/bookings', 'booking_id', new.id));
-      if new.payment_status = 'released' then
-        perform public.notify_user(new.provider_id, 'Payment received',
-          public.eizi_rs(new.total_price) || ' for booking #' || new.id || ' was added to your wallet.',
-          jsonb_build_object('url', '/provider/wallet', 'booking_id', new.id));
-      end if;
-    when 'cancelled' then
-      if auth.uid() is distinct from new.provider_id then
-        perform public.notify_user(new.provider_id, 'Booking cancelled',
-          cust || ' cancelled ' || svc || ' on ' || public.eizi_when(new.scheduled_at) || '.',
-          jsonb_build_object('url', '/provider', 'booking_id', new.id));
-      end if;
-      if auth.uid() is distinct from new.customer_id then
-        perform public.notify_user(new.customer_id, 'Booking cancelled',
-          'Your ' || svc || ' booking was cancelled.'
-            || case when new.payment_status = 'refunded' then ' ' || public.eizi_rs(new.total_price) || ' is back in your wallet.' else '' end,
-          jsonb_build_object('url', '/customer/bookings', 'booking_id', new.id));
-      end if;
-    else
-      null;
-  end case;
+    end if;
+  end if;
   return new;
 end;
 $$;
@@ -934,8 +1103,9 @@ create trigger bookings_notify_insert
   for each row execute function public.bookings_notify();
 
 drop trigger if exists bookings_notify_status on public.bookings;
-create trigger bookings_notify_status
-  after update of status on public.bookings
+drop trigger if exists bookings_notify_update on public.bookings;
+create trigger bookings_notify_update
+  after update of status, provider_id, quote_status, quote_amount on public.bookings
   for each row execute function public.bookings_notify();
 
 -- Admin approved / rejected a top-up or withdrawal → tell the user.
@@ -973,3 +1143,378 @@ drop trigger if exists wallet_requests_notify on public.wallet_requests;
 create trigger wallet_requests_notify
   after update of status on public.wallet_requests
   for each row execute function public.wallet_requests_notify();
+
+-- =====================================================================
+-- On-demand request flow (customer ↔ nearby workers)
+-- =====================================================================
+-- pending  (searching)  ──accept_booking──▶ accepted ──send_quote──▶ quote sent
+--    ▲                                        │  ▲                       │
+--    └────────────release_booking─────────────┘  └──(declined)───respond_quote──▶ approved (cash / wallet held)
+--                                                                                     │
+--                                                    complete_booking ◀───────────────┘ ──▶ completed ──rate_booking──▶ ★
+-- Customer may cancel until a quote is approved.  A declined quote can be completed for the visiting fee only.
+
+create or replace function public.km_between(lat1 double precision, lng1 double precision, lat2 double precision, lng2 double precision)
+returns double precision
+language sql
+immutable
+set search_path = ''
+as $$
+  select 6371 * 2 * asin(sqrt(
+    power(sin(radians(lat2 - lat1) / 2), 2) +
+    cos(radians(lat1)) * cos(radians(lat2)) * power(sin(radians(lng2 - lng1) / 2), 2)))
+$$;
+
+-- How far a request travels. Workers whose position or the customer's pin is unknown still see it.
+create or replace function public.request_radius_km()
+returns double precision language sql immutable set search_path = '' as $$ select 15::double precision $$;
+
+-- Marks this transaction as a trusted booking change (see bookings_before_update).
+create or replace function public.eizi_trust_booking_change()
+returns void language sql volatile set search_path = '' as $$ select set_config('eizi.booking_rpc', 'on', true) $$;
+revoke all on function public.eizi_trust_booking_change() from public, anon, authenticated;
+
+create or replace function public.eizi_me_provider()
+returns public.profiles
+language plpgsql
+stable
+security definer set search_path = ''
+as $$
+declare
+  me public.profiles;
+begin
+  select * into me from public.profiles where id = auth.uid();
+  if me.id is null or me.role is distinct from 'provider' then
+    raise exception 'Only worker accounts can do this';
+  end if;
+  return me;
+end;
+$$;
+revoke all on function public.eizi_me_provider() from public, anon, authenticated;
+
+-- Worker goes online / offline. Online saves the current GPS position so nearby requests reach them.
+create or replace function public.set_availability(p_online boolean, p_lat double precision default null, p_lng double precision default null)
+returns void
+language plpgsql
+security definer set search_path = ''
+as $$
+declare
+  me public.profiles := public.eizi_me_provider();
+begin
+  if p_online and me.service_id is null then
+    raise exception 'Choose your service category in Profile before going online';
+  end if;
+  if (p_lat is null) <> (p_lng is null) or p_lat not between -90 and 90 or p_lng not between -180 and 180 then
+    raise exception 'Invalid location';
+  end if;
+  insert into public.provider_presence (user_id, is_online, latitude, longitude, updated_at)
+  values (me.id, coalesce(p_online, false), p_lat, p_lng, now())
+  on conflict (user_id) do update
+    set is_online = excluded.is_online,
+        latitude  = coalesce(excluded.latitude, public.provider_presence.latitude),
+        longitude = coalesce(excluded.longitude, public.provider_presence.longitude),
+        updated_at = now();
+end;
+$$;
+
+-- Open requests a worker can take right now: their category, still unassigned, within the radius.
+create or replace function public.open_requests()
+returns table (
+  id bigint, service_id bigint, service_name text, tasks jsonb, address text, notes text,
+  scheduled_at timestamptz, created_at timestamptz, visit_fee numeric,
+  customer_name text, customer_avatar text, distance_km double precision
+)
+language plpgsql
+stable
+security definer set search_path = ''
+as $$
+declare
+  me public.profiles := public.eizi_me_provider();
+  pr public.provider_presence;
+begin
+  select * into pr from public.provider_presence where user_id = me.id;
+  if pr.user_id is null or not pr.is_online or me.service_id is null then
+    return;
+  end if;
+  return query
+    select b.id, b.service_id, s.name, b.tasks, b.address, b.notes, b.scheduled_at, b.created_at, b.visit_fee,
+           split_part(btrim(c.full_name), ' ', 1), c.avatar_url,
+           case when b.latitude is null or pr.latitude is null then null
+                else round(public.km_between(pr.latitude, pr.longitude, b.latitude, b.longitude)::numeric, 1)::double precision end
+    from public.bookings b
+    join public.services s on s.id = b.service_id
+    join public.profiles c on c.id = b.customer_id
+    where b.status = 'pending'
+      and b.provider_id is null
+      and b.service_id = me.service_id
+      and b.customer_id <> me.id
+      and b.created_at > now() - interval '2 days'
+      and (b.latitude is null or pr.latitude is null
+           or public.km_between(pr.latitude, pr.longitude, b.latitude, b.longitude) <= public.request_radius_km())
+    order by b.created_at desc
+    limit 50;
+end;
+$$;
+
+-- First worker to accept gets the job.
+create or replace function public.accept_booking(p_id bigint)
+returns void
+language plpgsql
+security definer set search_path = ''
+as $$
+declare
+  me public.profiles := public.eizi_me_provider();
+  b  public.bookings;
+begin
+  select * into b from public.bookings where id = p_id for update;
+  if b.id is null or b.service_id is distinct from me.service_id then
+    raise exception 'Request not found';
+  end if;
+  if b.status <> 'pending' or b.provider_id is not null then
+    raise exception 'Another worker already took this request';
+  end if;
+  if b.customer_id = me.id then
+    raise exception 'You cannot accept your own request';
+  end if;
+  if not exists (select 1 from public.provider_presence where user_id = me.id and is_online) then
+    raise exception 'Go online to accept requests';
+  end if;
+  if (select count(*) from public.bookings where provider_id = me.id and status = 'accepted') >= 3 then
+    raise exception 'Finish your current jobs first (max 3 at a time)';
+  end if;
+
+  perform public.eizi_trust_booking_change();
+  update public.bookings
+     set provider_id = me.id, status = 'accepted', accepted_at = now()
+   where id = b.id;
+end;
+$$;
+
+-- Worker can't make it after all → back to searching, other workers see it again.
+create or replace function public.release_booking(p_id bigint)
+returns void
+language plpgsql
+security definer set search_path = ''
+as $$
+declare
+  me public.profiles := public.eizi_me_provider();
+  b  public.bookings;
+begin
+  select * into b from public.bookings where id = p_id for update;
+  if b.id is null or b.provider_id is distinct from me.id then raise exception 'Booking not found'; end if;
+  if b.status <> 'accepted' or b.quote_status = 'approved' then
+    raise exception 'This job can no longer be handed back';
+  end if;
+  perform public.eizi_trust_booking_change();
+  update public.bookings
+     set provider_id = null, status = 'pending', accepted_at = null,
+         quote_amount = null, quote_note = '', quote_status = 'none', quoted_at = null
+   where id = b.id;
+end;
+$$;
+
+-- After inspecting the work the worker sends the final price (never below the visiting fee).
+create or replace function public.send_quote(p_id bigint, p_amount numeric, p_note text default '')
+returns void
+language plpgsql
+security definer set search_path = ''
+as $$
+declare
+  me public.profiles := public.eizi_me_provider();
+  b  public.bookings;
+begin
+  select * into b from public.bookings where id = p_id for update;
+  if b.id is null or b.provider_id is distinct from me.id then raise exception 'Booking not found'; end if;
+  if b.status <> 'accepted' or b.quote_status = 'approved' then
+    raise exception 'A quote can no longer be sent for this job';
+  end if;
+  if p_amount is null or round(p_amount) < b.visit_fee then
+    raise exception 'The price must be at least the visiting fee (Rs %)', round(b.visit_fee);
+  end if;
+  if p_amount > 500000 then raise exception 'Please check the amount'; end if;
+
+  perform public.eizi_trust_booking_change();
+  update public.bookings
+     set quote_amount = round(p_amount), quote_note = left(btrim(coalesce(p_note, '')), 300),
+         quote_status = 'sent', quoted_at = now()
+   where id = b.id;
+end;
+$$;
+
+-- Customer approves (choosing cash or wallet) or declines the quote.
+create or replace function public.respond_quote(p_id bigint, p_approve boolean, p_pay text default 'cash')
+returns void
+language plpgsql
+security definer set search_path = ''
+as $$
+declare
+  b public.bookings;
+begin
+  select * into b from public.bookings where id = p_id for update;
+  if b.id is null or b.customer_id is distinct from auth.uid() then raise exception 'Booking not found'; end if;
+  if b.status <> 'accepted' or b.quote_status <> 'sent' then
+    raise exception 'There is no price waiting for your approval';
+  end if;
+  perform public.eizi_trust_booking_change();
+
+  if not p_approve then
+    update public.bookings set quote_status = 'declined' where id = b.id;
+    return;
+  end if;
+
+  if p_pay not in ('cash', 'wallet') then raise exception 'Choose cash or wallet'; end if;
+  if p_pay = 'wallet' then
+    -- Raises "Insufficient wallet balance" (and nothing changes) if there isn't enough.
+    perform public.wallet_apply(b.customer_id, -b.quote_amount, 'booking_payment', b.id, null, 'Booking #' || b.id);
+  end if;
+  update public.bookings
+     set quote_status = 'approved', total_price = b.quote_amount, payment_method = p_pay,
+         payment_status = case when p_pay = 'wallet' then 'held' else 'unpaid' end
+   where id = b.id;
+end;
+$$;
+
+-- Worker finishes. Approved quote → that price (wallet money is released to the worker);
+-- declined quote → only the visiting fee, in cash.
+create or replace function public.complete_booking(p_id bigint)
+returns void
+language plpgsql
+security definer set search_path = ''
+as $$
+declare
+  me public.profiles := public.eizi_me_provider();
+  b  public.bookings;
+begin
+  select * into b from public.bookings where id = p_id for update;
+  if b.id is null or b.provider_id is distinct from me.id then raise exception 'Booking not found'; end if;
+  if b.status <> 'accepted' then raise exception 'This job is not in progress'; end if;
+  if b.quote_status not in ('approved', 'declined') then
+    raise exception 'Send your price and wait for the customer to approve it first';
+  end if;
+  perform public.eizi_trust_booking_change();
+  update public.bookings
+     set status = 'completed', completed_at = now(),
+         total_price = case when b.quote_status = 'approved' then b.total_price else b.visit_fee end
+   where id = b.id;
+end;
+$$;
+
+-- Customer cancels — any time before a quote is approved.
+create or replace function public.cancel_booking(p_id bigint)
+returns void
+language plpgsql
+security definer set search_path = ''
+as $$
+declare
+  b public.bookings;
+begin
+  select * into b from public.bookings where id = p_id for update;
+  if b.id is null or b.customer_id is distinct from auth.uid() then raise exception 'Booking not found'; end if;
+  if not (b.status = 'pending' or (b.status = 'accepted' and b.quote_status <> 'approved')) then
+    raise exception 'This booking can no longer be cancelled from the app. Please contact Eizi support.';
+  end if;
+  perform public.eizi_trust_booking_change();
+  update public.bookings set status = 'cancelled' where id = b.id;
+end;
+$$;
+
+-- Customer rates the worker once, after the job.
+create or replace function public.rate_booking(p_id bigint, p_stars int, p_review text default '')
+returns void
+language plpgsql
+security definer set search_path = ''
+as $$
+declare
+  b public.bookings;
+begin
+  select * into b from public.bookings where id = p_id for update;
+  if b.id is null or b.customer_id is distinct from auth.uid() then raise exception 'Booking not found'; end if;
+  if b.status <> 'completed' or b.provider_id is null then raise exception 'You can rate after the job is completed'; end if;
+  if b.rating is not null then raise exception 'You already rated this job'; end if;
+  if p_stars is null or p_stars not between 1 and 5 then raise exception 'Choose 1 to 5 stars'; end if;
+
+  perform public.eizi_trust_booking_change();
+  update public.bookings set rating = p_stars, review = left(btrim(coalesce(p_review, '')), 500) where id = b.id;
+  update public.profiles p
+     set rating_count = r.n, rating_avg = round(r.avg_stars, 2)
+    from (select count(*) n, avg(rating) avg_stars from public.bookings where provider_id = b.provider_id and rating is not null) r
+   where p.id = b.provider_id;
+end;
+$$;
+
+revoke all on function public.set_availability(boolean, double precision, double precision) from public, anon;
+revoke all on function public.open_requests() from public, anon;
+revoke all on function public.accept_booking(bigint) from public, anon;
+revoke all on function public.release_booking(bigint) from public, anon;
+revoke all on function public.send_quote(bigint, numeric, text) from public, anon;
+revoke all on function public.respond_quote(bigint, boolean, text) from public, anon;
+revoke all on function public.complete_booking(bigint) from public, anon;
+revoke all on function public.cancel_booking(bigint) from public, anon;
+revoke all on function public.rate_booking(bigint, int, text) from public, anon;
+grant execute on function public.set_availability(boolean, double precision, double precision) to authenticated;
+grant execute on function public.open_requests() to authenticated;
+grant execute on function public.accept_booking(bigint) to authenticated;
+grant execute on function public.release_booking(bigint) to authenticated;
+grant execute on function public.send_quote(bigint, numeric, text) to authenticated;
+grant execute on function public.respond_quote(bigint, boolean, text) to authenticated;
+grant execute on function public.complete_booking(bigint) to authenticated;
+grant execute on function public.cancel_booking(bigint) to authenticated;
+grant execute on function public.rate_booking(bigint, int, text) to authenticated;
+
+-- Users edit their own profile, but can't change their role once set, or their rating.
+create or replace function public.profiles_before_update()
+returns trigger
+language plpgsql
+security definer set search_path = ''
+as $$
+begin
+  if public.is_admin() or current_setting('eizi.booking_rpc', true) = 'on' then
+    return new;
+  end if;
+  if old.role is not null and new.role is distinct from old.role then
+    raise exception 'Your account type cannot be changed';
+  end if;
+  new.rating_avg := old.rating_avg;
+  new.rating_count := old.rating_count;
+  if new.service_id is distinct from old.service_id and new.service_id is not null
+     and not exists (select 1 from public.services where id = new.service_id and is_active) then
+    raise exception 'Choose an available service category';
+  end if;
+  new.city := left(btrim(coalesce(new.city, '')), 80);
+  return new;
+end;
+$$;
+
+drop trigger if exists profiles_before_update on public.profiles;
+create trigger profiles_before_update
+  before update on public.profiles
+  for each row execute function public.profiles_before_update();
+
+-- Access for the new tables
+alter table public.service_tasks     enable row level security;
+alter table public.provider_kyc      enable row level security;
+alter table public.provider_presence enable row level security;
+
+drop policy if exists "service tasks readable" on public.service_tasks;
+create policy "service tasks readable" on public.service_tasks
+  for select to anon, authenticated using (true);
+drop policy if exists "admin full access" on public.service_tasks;
+create policy "admin full access" on public.service_tasks
+  for all to authenticated using (public.is_admin()) with check (public.is_admin());
+
+drop policy if exists "own cnic" on public.provider_kyc;
+create policy "own cnic" on public.provider_kyc
+  for select to authenticated using (user_id = auth.uid() or public.is_admin());
+drop policy if exists "admin full access" on public.provider_kyc;
+create policy "admin full access" on public.provider_kyc
+  for all to authenticated using (public.is_admin()) with check (public.is_admin());
+
+drop policy if exists "own presence" on public.provider_presence;
+create policy "own presence" on public.provider_presence
+  for select to authenticated using (user_id = auth.uid() or public.is_admin());
+
+revoke all on public.service_tasks, public.provider_kyc, public.provider_presence from anon, authenticated;
+grant select on public.service_tasks to anon, authenticated;
+grant insert, update, delete on public.service_tasks to authenticated;            -- RLS: admins only
+grant select, insert, update, delete on public.provider_kyc to authenticated;      -- RLS: own read, admins write
+grant select on public.provider_presence to authenticated;                         -- RLS: own + admins; writes via set_availability()

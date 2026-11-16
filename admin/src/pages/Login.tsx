@@ -36,7 +36,7 @@ export function Login() {
         <div className="absolute -top-24 -right-24 size-96 rounded-full bg-white/5" />
         <div className="absolute -bottom-32 -left-16 size-80 rounded-full bg-brand-700/30" />
         <div className="relative flex items-center gap-3">
-          <div className="flex size-11 items-center justify-center rounded-xl bg-white text-xl font-black text-brand-700">E</div>
+          <img src="/favicon.png" alt="" className="size-12 rounded-xl shadow-lg" />
           <span className="text-xl font-extrabold">Eizi</span>
         </div>
         <div className="relative">
@@ -46,7 +46,7 @@ export function Login() {
             marketplace with confidence.
           </h1>
           <p className="mt-4 max-w-md text-brand-200">
-            Review new sign-ups, manage service categories and provider listings, and keep every booking on track — all in one place.
+            Review new sign-ups, manage services, workers and requests, and keep every booking on track — all in one place.
           </p>
         </div>
         <p className="relative text-xs text-brand-300">Restricted area · Authorised administrators only</p>

@@ -1,67 +1,105 @@
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
-import { useCallback, useMemo, useState } from 'react';
-import { Keyboard, Pressable, RefreshControl, ScrollView, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  ActivityIndicator,
+  Image,
+  Keyboard,
+  Linking,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  Text,
+  TextInput,
+  View,
+  useWindowDimensions,
+} from 'react-native';
 
-import { HomeHero } from '@/components/HomeHero';
-import { GRID_GAP, GRID_PADDING, HowItWorks, ServiceCard, ServiceRow, cardWidthFor, type ServiceStat } from '@/components/ServiceBrowse';
-import { EmptyState, Loader, ServiceIcon, StatusBadge } from '@/components/ui';
-import { formatDateTime } from '@/lib/format';
-import { groupServices } from '@/lib/serviceGroups';
+import { StageBadge } from '@/components/BookingCard';
+import { FreeMap } from '@/components/FreeMap';
+import { greeting } from '@/components/HomeHero';
+import { NearbyMapModal } from '@/components/NearbyMapModal';
+import { GRID_GAP, GRID_PADDING, HowItWorks, ServiceRow, cardWidthFor, type ServiceStat } from '@/components/ServiceBrowse';
+import { EmptyState, Loader, ServiceIcon, serviceGlyph } from '@/components/ui';
+import { stageOf, tasksText } from '@/lib/booking';
+import { formatPrice } from '@/lib/format';
+import { DEFAULT_CENTER, getCurrentLocation, lastKnownLocation, LocationError, type PickedLocation } from '@/lib/location';
+import { demoWorkersAround } from '@/lib/nearbyWorkers';
 import { supabase } from '@/lib/supabase';
-import { colors, shadow } from '@/lib/theme';
-import type { BookingStatus, Service } from '@/lib/types';
+import { colors, shadow, tintFor } from '@/lib/theme';
+import type { BookingStatus, QuoteStatus, Service, TaskRef } from '@/lib/types';
 import { useAuth } from '@/providers/AuthProvider';
 
-type Stats = Record<number, ServiceStat>;
-type NextBooking = {
+type Active = {
   id: number;
   service_id: number;
-  scheduled_at: string;
-  hours: number;
   status: BookingStatus;
+  quote_status: QuoteStatus;
+  tasks: TaskRef[];
   service: { name: string; icon: string } | null;
-  provider: { full_name: string } | null;
 };
 
 export default function CustomerHome() {
   const { profile, session } = useAuth();
   const { width: screenWidth } = useWindowDimensions();
-  const cardWidth = cardWidthFor(screenWidth);
+  const tileWidth = cardWidthFor(screenWidth);
 
   const [services, setServices] = useState<Service[]>([]);
-  const [stats, setStats] = useState<Stats>({});
-  const [next, setNext] = useState<NextBooking | null>(null);
+  const [stats, setStats] = useState<Record<number, ServiceStat>>({});
+  const [taskNames, setTaskNames] = useState<Record<number, string[]>>({});
+  const [active, setActive] = useState<Active | null>(null);
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [here, setHere] = useState<PickedLocation | null>(lastKnownLocation());
+  const [locating, setLocating] = useState(false);
+  const [locError, setLocError] = useState<LocationError | null>(null);
+  const [mapOpen, setMapOpen] = useState(false);
+  const workers = useMemo(() => demoWorkersAround(here), [here]);
 
   const load = useCallback(async () => {
-    const [svc, offers, upcoming] = await Promise.all([
-      supabase.from('services').select('*').order('name'),
-      supabase.from('provider_services').select('service_id, hourly_rate').eq('is_active', true),
+    const [svc, tasks, current] = await Promise.all([
+      supabase.from('services').select('*').eq('is_active', true).order('sort').order('name'),
+      supabase.from('service_tasks').select('service_id, name').eq('is_active', true),
       session
         ? supabase
             .from('bookings')
-            .select('id, service_id, scheduled_at, hours, status, service:services(name, icon), provider:profiles!bookings_provider_id_fkey(full_name)')
+            .select('id, service_id, status, quote_status, tasks, service:services(name, icon)')
             .eq('customer_id', session.user.id)
             .in('status', ['pending', 'accepted'])
-            .gte('scheduled_at', new Date().toISOString())
-            .order('scheduled_at')
+            .order('created_at', { ascending: false })
             .limit(1)
             .maybeSingle()
         : Promise.resolve({ data: null }),
     ]);
     setServices((svc.data as Service[]) ?? []);
-    const s: Stats = {};
-    for (const o of (offers.data ?? []) as { service_id: number; hourly_rate: number }[]) {
-      const rate = Number(o.hourly_rate);
-      const cur = s[o.service_id];
-      s[o.service_id] = cur ? { count: cur.count + 1, from: Math.min(cur.from, rate) } : { count: 1, from: rate };
+    const s: Record<number, ServiceStat> = {};
+    const names: Record<number, string[]> = {};
+    for (const t of (tasks.data ?? []) as { service_id: number; name: string }[]) {
+      s[t.service_id] = { tasks: (s[t.service_id]?.tasks ?? 0) + 1 };
+      (names[t.service_id] ??= []).push(t.name.toLowerCase());
     }
     setStats(s);
-    setNext((upcoming.data as unknown as NextBooking | null) ?? null);
+    setTaskNames(names);
+    setActive((current.data as unknown as Active | null) ?? null);
   }, [session]);
+
+  const locate = useCallback(async (quick: boolean) => {
+    setLocating(true);
+    try {
+      setHere(await getCurrentLocation({ quick }));
+      setLocError(null);
+    } catch (e) {
+      setLocError(e instanceof LocationError ? e : new LocationError('Could not find your location. Check that GPS is on.'));
+    } finally {
+      setLocating(false);
+    }
+  }, []);
+
+  // Show where the user is as soon as the home screen opens.
+  useEffect(() => {
+    if (!lastKnownLocation()) Promise.resolve().then(() => locate(true));
+  }, [locate]);
 
   useFocusEffect(
     useCallback(() => {
@@ -72,25 +110,20 @@ export default function CustomerHome() {
   const results = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return [];
-    return services
-      .filter((s) => s.name.toLowerCase().includes(q) || s.description.toLowerCase().includes(q))
-      .sort((a, b) => (stats[b.id]?.count ?? 0) - (stats[a.id]?.count ?? 0));
-  }, [services, query, stats]);
-
-  const groups = useMemo(() => groupServices(services), [services]);
+    return services.filter(
+      (s) => s.name.toLowerCase().includes(q) || s.description.toLowerCase().includes(q) || (taskNames[s.id] ?? []).some((n) => n.includes(q)),
+    );
+  }, [services, query, taskNames]);
 
   function openService(id: number) {
     router.push({ pathname: '/service/[id]', params: { id: String(id) } });
   }
 
-  function onSearchSubmit() {
-    Keyboard.dismiss();
-    if (results.length === 1) openService(results[0].id);
-  }
-
   if (loading) return <Loader />;
 
   const searching = query.trim().length > 0;
+  const activeStage = active ? stageOf(active) : null;
+  const firstName = (profile?.full_name ?? '').trim().split(/\s+/)[0] || 'there';
 
   return (
     <ScrollView
@@ -104,23 +137,84 @@ export default function CustomerHome() {
           tintColor={colors.brand}
           onRefresh={async () => {
             setRefreshing(true);
-            await load();
+            await Promise.all([load(), locate(false)]);
             setRefreshing(false);
           }}
         />
       }
     >
-      <HomeHero name={profile?.full_name ?? ''} line1="What can we help" line2="you with" highlight="today?">
-        <View className="mt-6 h-16 flex-row items-center gap-3 rounded-full bg-white pl-5 pr-2" style={shadow.lg}>
-          <Ionicons name="search" size={22} color={colors.brand} />
+      {/* Greeting */}
+      <View className="px-5 pb-3 pt-2" style={{ backgroundImage: `linear-gradient(180deg, ${colors.heroTop} 0%, ${colors.surface} 100%)` }}>
+        <Text className="text-[14px] font-medium text-slate-500">{greeting()},</Text>
+        <Text className="text-[22px] font-bold tracking-tight text-ink" numberOfLines={1}>
+          {firstName}
+        </Text>
+
+        {/* Live map with the user's current location */}
+        <View className="mt-4 overflow-hidden rounded-3xl bg-white" style={shadow.md}>
+          <View>
+            <FreeMap
+              center={here ?? DEFAULT_CENTER}
+              zoom={here ? 14.5 : 11}
+              interactive
+              mode="explore"
+              me={here}
+              workers={workers}
+              onExpand={() => setMapOpen(true)}
+              style={{ height: 230 }}
+            />
+            {workers.length ? (
+              <Pressable
+                onPress={() => setMapOpen(true)}
+                accessibilityRole="button"
+                className="absolute bottom-3 left-3 flex-row items-center gap-1.5 rounded-full bg-white px-3 py-1.5 active:bg-slate-50"
+                style={shadow.md}
+              >
+                <View className="h-2 w-2 rounded-full bg-emerald-500" />
+                <Text className="text-[12px] font-bold text-ink">{workers.length} workers nearby</Text>
+              </Pressable>
+            ) : null}
+          </View>
+          <View className="flex-row items-center gap-3 px-4 py-3">
+            <View className="h-9 w-9 items-center justify-center rounded-full bg-brand-50">
+              <Ionicons name="location" size={18} color={colors.brand} />
+            </View>
+            <View className="flex-1">
+              <Text className="text-xs font-semibold uppercase tracking-wider text-slate-400">Current location</Text>
+              <Text className="text-[14px] font-semibold text-ink" numberOfLines={1}>
+                {locating && !here
+                  ? 'Finding you…'
+                  : here
+                    ? here.address || `${here.latitude.toFixed(4)}, ${here.longitude.toFixed(4)}`
+                    : locError?.message ?? 'Location unavailable'}
+              </Text>
+            </View>
+            <Pressable
+              onPress={() => (locError?.openSettings ? Linking.openSettings() : locate(false))}
+              accessibilityRole="button"
+              accessibilityLabel="Refresh my location"
+              hitSlop={6}
+              className="h-10 w-10 items-center justify-center rounded-full border border-line bg-white active:bg-slate-50"
+            >
+              {locating ? <ActivityIndicator size="small" color={colors.brand} /> : <Ionicons name="locate" size={20} color={colors.brandDark} />}
+            </Pressable>
+          </View>
+        </View>
+
+        {/* Search */}
+        <View className="mt-4 h-14 flex-row items-center gap-3 rounded-2xl bg-white px-4" style={shadow.sm}>
+          <Ionicons name="search" size={20} color={colors.brand} />
           <TextInput
             className="flex-1 text-base text-ink"
-            placeholder="Search cook, electrician, plumber…"
+            placeholder="Search fan, ironing, washroom…"
             placeholderTextColor={colors.subtle}
             value={query}
             onChangeText={setQuery}
             returnKeyType="search"
-            onSubmitEditing={onSearchSubmit}
+            onSubmitEditing={() => {
+              Keyboard.dismiss();
+              if (results.length === 1) openService(results[0].id);
+            }}
             accessibilityLabel="Search services"
           />
           {query ? (
@@ -128,100 +222,116 @@ export default function CustomerHome() {
               <Ionicons name="close-circle" size={20} color={colors.subtle} />
             </Pressable>
           ) : null}
-          <Pressable
-            onPress={onSearchSubmit}
-            accessibilityRole="button"
-            accessibilityLabel="Search"
-            className="h-12 w-12 items-center justify-center rounded-full bg-brand-700 active:bg-brand-800"
-            style={shadow.brand}
-          >
-            <Ionicons name="arrow-forward" size={22} color={colors.white} />
-          </Pressable>
         </View>
-      </HomeHero>
+      </View>
 
       {searching ? (
-        /* ---------------- Search results ---------------- */
-        <View className="pt-1">
+        <View className="pt-2">
           <Text className="mb-3 px-5 text-sm font-semibold text-slate-500">
             {results.length} result{results.length === 1 ? '' : 's'} for “{query.trim()}”
           </Text>
           {results.length ? (
             results.map((s) => <ServiceRow key={s.id} service={s} stat={stats[s.id]} onPress={() => openService(s.id)} />)
           ) : (
-            <EmptyState icon="search" title="No services found" subtitle="Try another word, like “cook”, “clean” or “wiring”." />
+            <EmptyState icon="search" title="No services found" subtitle="Try another word, like “fan”, “ironing” or “washroom”." />
           )}
         </View>
       ) : (
         <>
-          {/* ---------------- Next booking ---------------- */}
-          {next ? (
+          {active && activeStage ? (
             <Pressable
               onPress={() => router.navigate('/customer/bookings')}
-              className="mx-5 mb-6 flex-row items-center gap-3 rounded-3xl bg-white p-4"
+              className="mx-5 mb-5 mt-2 flex-row items-center gap-3 rounded-3xl bg-white p-4"
               style={shadow.md}
               accessibilityRole="button"
-              accessibilityLabel="Open your next booking"
+              accessibilityLabel="Open your current request"
             >
-              <ServiceIcon service={next.service} tintId={next.service_id} size={48} />
+              <ServiceIcon service={active.service} tintId={active.service_id} size={48} />
               <View className="flex-1">
-                <Text className="text-xs font-semibold uppercase tracking-wider text-slate-400">Your next booking</Text>
+                <Text className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                  {activeStage === 'quote' ? 'Price waiting for you' : 'Your current request'}
+                </Text>
                 <Text className="mt-0.5 text-base font-bold text-ink" numberOfLines={1}>
-                  {next.service?.name} · {next.hours} hr{next.hours > 1 ? 's' : ''}
+                  {active.service?.name}
                 </Text>
                 <Text className="text-[13px] text-slate-500" numberOfLines={1}>
-                  {formatDateTime(next.scheduled_at)}
-                  {next.provider?.full_name ? ` · ${next.provider.full_name}` : ''}
+                  {tasksText(active.tasks, 2)}
                 </Text>
               </View>
-              <StatusBadge status={next.status} />
+              <StageBadge stage={activeStage} />
             </Pressable>
           ) : null}
 
-          {/* ---------------- Services: grouped, illustrated cards ---------------- */}
-          {groups.map((g) => (
-            <View key={g.title} className="mb-4">
-              <SectionHead title={g.title} subtitle={`${g.items.filter((s) => stats[s.id]).length} of ${g.items.length} available now`} />
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', columnGap: GRID_GAP, paddingHorizontal: GRID_PADDING }}>
-                {[...g.items]
-                  .sort((a, b) => (stats[b.id] ? 1 : 0) - (stats[a.id] ? 1 : 0))
-                  .map((s) => (
-                    <ServiceCard key={s.id} service={s} stat={stats[s.id]} width={cardWidth} onPress={() => openService(s.id)} />
-                  ))}
+          <View className="mb-3 mt-2 px-5">
+            <Text className="text-xl font-bold text-ink">Select a Service</Text>
+            <Text className="text-[13px] text-slate-500">Choose a service and book with a few taps.</Text>
+          </View>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', columnGap: GRID_GAP, rowGap: GRID_GAP, paddingHorizontal: GRID_PADDING }}>
+            {services.map((s) => (
+              <ServiceTile key={s.id} service={s} tasks={stats[s.id]?.tasks ?? 0} width={tileWidth} onPress={() => openService(s.id)} />
+            ))}
+            <Pressable
+              onPress={() => router.navigate('/customer/bookings')}
+              accessibilityRole="button"
+              style={[{ width: tileWidth }, shadow.sm]}
+              className="items-center justify-center rounded-3xl border border-line bg-white px-3 py-5 active:bg-slate-50"
+            >
+              <View className="h-16 w-16 items-center justify-center rounded-2xl bg-slate-100">
+                <Ionicons name="calendar-outline" size={30} color={colors.brandDark} />
               </View>
-            </View>
-          ))}
+              <Text className="mt-3 text-center text-[15px] font-bold text-ink">My Bookings</Text>
+              <Text className="mt-0.5 text-center text-xs text-slate-500">Track requests</Text>
+            </Pressable>
+          </View>
 
-          {/* ---------------- Promo ---------------- */}
           <View
-            className="mx-5 mb-7 mt-3 flex-row items-center gap-4 overflow-hidden rounded-3xl p-5"
+            className="mx-5 mb-7 mt-6 flex-row items-center gap-4 overflow-hidden rounded-3xl p-5"
             style={{ backgroundImage: 'linear-gradient(120deg, #0B6358 0%, #14917F 100%)' }}
           >
             <View className="absolute -right-6 -top-8 h-28 w-28 rounded-full bg-white/10" />
             <View className="h-12 w-12 items-center justify-center rounded-2xl bg-white/15">
-              <Ionicons name="time" size={24} color={colors.white} />
+              <Ionicons name="shield-checkmark" size={24} color={colors.white} />
             </View>
             <View className="flex-1">
-              <Text className="text-base font-bold text-white">Pay only for the hours you need</Text>
+              <Text className="text-base font-bold text-white">You approve the price first</Text>
               <Text className="mt-0.5 text-[13px] leading-5 text-brand-100">
-                Pick 1, 2 or more hours and see the full price before you book.
+                Workers check the job and send a price. Nothing starts until you say yes.
               </Text>
             </View>
           </View>
 
-          {/* ---------------- How it works ---------------- */}
           <HowItWorks />
         </>
       )}
+      <NearbyMapModal visible={mapOpen} onClose={() => setMapOpen(false)} here={here} workers={workers} />
     </ScrollView>
   );
 }
 
-function SectionHead({ title, subtitle }: { title: string; subtitle?: string }) {
+/** Mock-up style tile: illustration (or icon) on a soft tint, name underneath. */
+function ServiceTile({ service, tasks, width, onPress }: { service: Service; tasks: number; width: number; onPress: () => void }) {
+  const tint = tintFor(service.id);
   return (
-    <View className="mb-3 px-5">
-      <Text className="text-lg font-bold text-ink">{title}</Text>
-      {subtitle ? <Text className="text-[13px] text-slate-500">{subtitle}</Text> : null}
-    </View>
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`${service.name}, ${tasks} services, visiting fee ${formatPrice(service.visit_fee)}`}
+      style={[{ width }, shadow.sm]}
+      className="items-center rounded-3xl border border-line bg-white px-3 py-5 active:border-brand-300 active:bg-brand-50"
+    >
+      <View className="h-16 w-16 items-center justify-center rounded-2xl" style={{ backgroundColor: tint.bg }}>
+        {service.image_url ? (
+          <Image source={{ uri: service.image_url }} style={{ width: 56, height: 56 }} resizeMode="contain" />
+        ) : (
+          <MaterialCommunityIcons name={serviceGlyph(service)} size={32} color={tint.fg} />
+        )}
+      </View>
+      <Text className="mt-3 text-center text-[15px] font-bold leading-5 text-ink" numberOfLines={2} maxFontSizeMultiplier={1.3}>
+        {service.name}
+      </Text>
+      <Text className="mt-1 text-center text-xs text-slate-500" numberOfLines={1} maxFontSizeMultiplier={1.2}>
+        {tasks ? `${tasks} services · ` : ''}Visit {formatPrice(service.visit_fee)}
+      </Text>
+    </Pressable>
   );
 }

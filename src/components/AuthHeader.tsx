@@ -1,11 +1,11 @@
 import type { ReactNode } from 'react';
-import { KeyboardAvoidingView, Platform, ScrollView, Text, View } from 'react-native';
+import { Image, KeyboardAvoidingView, Platform, ScrollView, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useStatusBar } from '@/components/ui';
-import { shadow } from '@/lib/theme';
+import { colors } from '@/lib/theme';
 
-/** Teal brand hero on top, white rounded sheet below — shared by login & sign up. */
+/** Light, airy screen with the full Eizi logo on top — shared by login & sign up. */
 export function AuthShell({ title, subtitle, children, footer }: {
   title: string;
   subtitle: string;
@@ -13,38 +13,34 @@ export function AuthShell({ title, subtitle, children, footer }: {
   footer?: ReactNode;
 }) {
   const insets = useSafeAreaInsets();
-  useStatusBar('light');
+  useStatusBar('dark');
 
   return (
-    <KeyboardAvoidingView className="flex-1 bg-brand-800" behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardAvoidingView className="flex-1 bg-white" behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      {/* soft teal waves in the corners */}
+      <View pointerEvents="none" className="absolute -right-24 -top-28 h-72 w-72 rounded-full" style={{ backgroundColor: colors.heroTop }} />
+      <View pointerEvents="none" className="absolute -left-28 bottom-[-120px] h-80 w-80 rounded-full" style={{ backgroundColor: '#EEF9F7' }} />
       <ScrollView
         className="flex-1"
-        contentContainerClassName="flex-grow"
+        contentContainerClassName="flex-grow px-6"
+        contentContainerStyle={{ paddingTop: insets.top + 24, paddingBottom: insets.bottom + 24 }}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
-        bounces={false}
       >
-        {/* Hero */}
-        <View className="overflow-hidden px-6 pb-12" style={{ paddingTop: insets.top + 28 }}>
-          <View className="absolute -right-16 -top-10 h-56 w-56 rounded-full bg-white/5" />
-          <View className="absolute -left-10 bottom-0 h-32 w-32 rounded-full bg-brand-600/40" />
-
-          <View className="flex-row items-center gap-3">
-            <View className="h-12 w-12 items-center justify-center rounded-2xl bg-white" style={shadow.lg}>
-              <Text className="text-2xl font-black text-brand-700">E</Text>
-            </View>
-            <Text className="text-2xl font-extrabold tracking-tight text-white">Eizi</Text>
-          </View>
-
-          <Text className="mt-8 text-[32px] font-bold leading-10 tracking-tight text-white">{title}</Text>
-          <Text className="mt-2 text-base leading-6 text-brand-100">{subtitle}</Text>
+        <View className="items-center">
+          <Image
+            source={require('../../assets/logo-full.png')}
+            style={{ width: 170, height: 128 }}
+            resizeMode="contain"
+            accessibilityLabel="Eizi, Your Home, Our Care"
+          />
         </View>
 
-        {/* Sheet */}
-        <View className="flex-1 rounded-t-[32px] bg-surface px-6 pt-8" style={{ paddingBottom: insets.bottom + 24 }}>
-          {children}
-          {footer ? <View className="mt-8">{footer}</View> : null}
-        </View>
+        <Text className="mt-8 text-[28px] font-bold tracking-tight text-ink">{title}</Text>
+        <Text className="mb-6 mt-1 text-[15px] leading-6 text-slate-500">{subtitle}</Text>
+
+        {children}
+        {footer ? <View className="mt-8">{footer}</View> : null}
       </ScrollView>
     </KeyboardAvoidingView>
   );

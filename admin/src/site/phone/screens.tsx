@@ -192,7 +192,7 @@ function Signup() {
         <div className="grid grid-cols-2 gap-2">
           {[
             { icon: House, t: 'Customer', s: 'I need a service', on: true },
-            { icon: HardHat, t: 'Provider', s: 'I offer a service', on: false },
+            { icon: HardHat, t: 'Worker', s: 'I offer a service', on: false },
           ].map((r) => (
             <Card key={r.t} className={`border-2 p-2 ${r.on ? 'border-brand-600' : 'border-transparent'}`}>
               <div className="flex items-start justify-between">
@@ -267,7 +267,7 @@ function Home() {
               </div>
               <p className="mt-1 text-[9px] font-bold text-ink">{s.name}</p>
               {i < 3 ? (
-                <span className="mt-1 inline-block rounded-full bg-brand-50 px-1.5 py-0.5 text-[7px] font-bold text-brand-800">from Rs {['1,500', '1,200', '800'][i]}/hr</span>
+                <span className="mt-1 inline-block rounded-full bg-brand-50 px-1.5 py-0.5 text-[7px] font-bold text-brand-800">Visit Rs 300</span>
               ) : (
                 <span className="mt-1 inline-block rounded-full bg-violet-50 px-1.5 py-0.5 text-[7px] font-bold text-violet-700">Coming soon</span>
               )}
@@ -307,7 +307,7 @@ function Providers() {
               </div>
               <div className="rounded-lg bg-brand-50 px-1.5 py-1 text-right">
                 <p className="text-[10px] font-bold text-brand-700">Rs {p.r}</p>
-                <p className="text-[6.5px] text-brand-600">per hour</p>
+                <p className="text-[6.5px] text-brand-600">visit fee</p>
               </div>
             </div>
             <div className="mt-2 flex items-center justify-between">
@@ -330,7 +330,7 @@ function Book() {
       <AppBar title="Book a service" back bg="bg-surface" />
       <div className="space-y-2 px-3.5">
         <Card className="p-2.5">
-          <StepTitle n={1} t="How many hours?" />
+          <StepTitle n={1} t="What do you need?" />
           <div className="mt-1.5 grid grid-cols-4 gap-1">
             {[1, 2, 3, 4].map((h) => (
               <div key={h} className={`rounded-md py-1 text-center ${h === 2 ? 'bg-brand-700 text-white shadow' : 'border border-line bg-white text-ink'}`}>
@@ -397,7 +397,7 @@ function Pay() {
         <Card className="p-2.5">
           <p className="text-[10px] font-bold text-ink">Price details</p>
           <div className="mt-1 flex justify-between text-[8.5px] text-slate-500">
-            <span>Rs 1,500 × 2 hours</span>
+            <span>Approved price</span>
             <span className="font-semibold text-ink">Rs 3,000</span>
           </div>
           <div className="my-1.5 h-px bg-slate-100" />
@@ -554,7 +554,7 @@ function ProviderServices() {
           </div>
         </Card>
         <Card className="space-y-2 p-2.5">
-          <p className="text-[8px] font-semibold text-slate-600">Your price per hour</p>
+          <p className="text-[8px] font-semibold text-slate-600">Your price for this job</p>
           <div className="flex h-8 items-center rounded-lg border-2 border-brand-500 bg-white px-2 shadow-[0_0_0_3px_rgba(20,145,127,.12)]">
             <span className="text-[10px] font-semibold text-slate-500">Rs</span>
             <span className="ml-1.5 flex-1 text-[12px] font-bold text-ink">1,500</span>

@@ -1,5 +1,8 @@
 export type Role = 'customer' | 'provider';
 export type BookingStatus = 'pending' | 'accepted' | 'rejected' | 'completed' | 'cancelled';
+export type QuoteStatus = 'none' | 'sent' | 'approved' | 'declined';
+export type PayMethod = 'cash' | 'wallet';
+export type PayStatus = 'unpaid' | 'held' | 'released' | 'refunded';
 
 export type Profile = {
   id: string;
@@ -8,39 +11,32 @@ export type Profile = {
   role: Role | null;
   avatar_url?: string | null;
   bio?: string;
+  city?: string;
+  service_id?: number | null;
+  rating_avg?: number;
+  rating_count?: number;
 };
 
+/** A service category (Cleaning, Electrician …). */
 export type Service = {
   id: number;
   name: string;
   icon: string;
   description: string;
   image_url?: string | null;
-};
-
-export type ProviderService = {
-  id: number;
-  provider_id: string;
-  service_id: number;
-  hourly_rate: number;
-  description: string;
+  visit_fee: number;
+  sort: number;
   is_active: boolean;
 };
 
-export type Booking = {
+/** A specific job inside a category (Fan Fitting & Repair …). */
+export type ServiceTask = {
   id: number;
-  customer_id: string;
-  provider_id: string;
-  provider_service_id: number;
   service_id: number;
-  hours: number;
-  hourly_rate: number;
-  total_price: number;
-  scheduled_at: string;
-  address: string;
-  latitude: number | null;
-  longitude: number | null;
-  notes: string;
-  status: BookingStatus;
-  created_at: string;
+  name: string;
+  base_price: number | null;
+  sort: number;
+  is_active: boolean;
 };
+
+export type TaskRef = { id: number; name: string };

@@ -19,7 +19,7 @@ export class LocationError extends Error {
 }
 
 /** Ask for permission (foreground only, never background) and read the phone's current position + address. */
-export async function getCurrentLocation(): Promise<PickedLocation> {
+export async function getCurrentLocation(opts: { quick?: boolean } = {}): Promise<PickedLocation> {
   const perm = await Location.requestForegroundPermissionsAsync();
   if (!perm.granted) {
     throw new LocationError(
@@ -41,18 +41,34 @@ export async function getCurrentLocation(): Promise<PickedLocation> {
     }
   }
 
-  const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+  // quick: a recent cached fix is fine (home map); otherwise ask the GPS for a fresh, accurate one.
+  const cached = opts.quick ? await Location.getLastKnownPositionAsync({ maxAge: 5 * 60_000, requiredAccuracy: 200 }).catch(() => null) : null;
+  const pos = cached ?? (await Location.getCurrentPositionAsync({ accuracy: opts.quick ? Location.Accuracy.Balanced : Location.Accuracy.High }));
   const coords = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
+  const picked = { ...coords, address: await addressFor(coords) };
+  lastPicked = picked;
+  return picked;
+}
 
-  let address = '';
+/** Street address for a point, or '' when the phone's geocoder can't tell (offline, no Play services). */
+export async function addressFor(coords: Coords): Promise<string> {
   try {
     const [place] = await Location.reverseGeocodeAsync(coords);
-    if (place) address = formatPlace(place);
+    return place ? formatPlace(place) : '';
   } catch {
-    // Geocoder unavailable (no internet / no Play services) — coordinates are still saved.
+    return '';
   }
-  return { ...coords, address };
 }
+
+/** Last location found in this app session — the booking screen starts from what the home map showed. */
+let lastPicked: PickedLocation | null = null;
+export const lastKnownLocation = () => lastPicked;
+export function rememberLocation(p: PickedLocation) {
+  lastPicked = p;
+}
+
+/** Shown when the customer's location isn't known yet. */
+export const DEFAULT_CENTER: Coords = { latitude: 31.5204, longitude: 74.3587 }; // Lahore
 
 function formatPlace(p: Location.LocationGeocodedAddress): string {
   if (p.formattedAddress) return p.formattedAddress;

@@ -4,8 +4,8 @@ export type BookingStatus = 'pending' | 'accepted' | 'rejected' | 'completed' | 
 export const BOOKING_STATUSES: BookingStatus[] = ['pending', 'accepted', 'rejected', 'completed', 'cancelled']
 
 export const STATUS_LABEL: Record<BookingStatus, string> = {
-  pending: 'Pending',
-  accepted: 'Confirmed',
+  pending: 'Finding worker',
+  accepted: 'Assigned',
   rejected: 'Declined',
   completed: 'Completed',
   cancelled: 'Cancelled',
@@ -19,6 +19,10 @@ export type Profile = {
   created_at: string
   avatar_url?: string | null
   bio?: string
+  city?: string
+  service_id?: number | null
+  rating_avg?: number
+  rating_count?: number
 }
 
 export type Account = {
@@ -29,7 +33,7 @@ export type Account = {
 }
 
 /** Profile merged with private auth data (admin only). */
-export type UserRow = Profile & Partial<Omit<Account, 'id'>>
+export type UserRow = Profile & Partial<Omit<Account, 'id'>> & { cnic?: string | null; online?: boolean; service_name?: string | null }
 
 export type Service = {
   id: number
@@ -37,6 +41,18 @@ export type Service = {
   icon: string
   description: string
   image_url: string | null
+  visit_fee: number
+  sort: number
+  is_active: boolean
+}
+
+export type ServiceTask = {
+  id: number
+  service_id: number
+  name: string
+  base_price: number | null
+  sort: number
+  is_active: boolean
 }
 
 export type Listing = {
@@ -54,11 +70,15 @@ export type Listing = {
 export type Booking = {
   id: number
   customer_id: string
-  provider_id: string
-  provider_service_id: number
+  provider_id: string | null
   service_id: number
-  hours: number
-  hourly_rate: number
+  tasks: { id: number; name: string }[]
+  visit_fee: number
+  quote_amount: number | null
+  quote_note: string
+  quote_status: 'none' | 'sent' | 'approved' | 'declined'
+  rating: number | null
+  review: string
   total_price: number
   scheduled_at: string
   address: string

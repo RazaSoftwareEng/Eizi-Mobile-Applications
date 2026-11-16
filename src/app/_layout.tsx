@@ -31,10 +31,9 @@ export default function RootLayout() {
           }}
         >
           <Stack.Screen name="service/[id]" options={{ headerShown: true, title: '' }} />
-          <Stack.Screen name="book/[id]" options={{ headerShown: true, title: 'Book a service' }} />
+          <Stack.Screen name="book/[id]" options={{ headerShown: true, title: 'Set your address' }} />
           <Stack.Screen name="wallet/add" options={{ headerShown: true, title: 'Add money' }} />
           <Stack.Screen name="wallet/withdraw" options={{ headerShown: true, title: 'Withdraw' }} />
-          <Stack.Screen name="add-service" options={{ headerShown: true, title: 'Your service', presentation: 'modal' }} />
         </Stack>
         <UpdateBanner />
         <PushNotifications />

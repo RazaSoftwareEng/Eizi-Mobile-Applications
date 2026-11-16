@@ -1,12 +1,12 @@
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { router } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, View } from 'react-native';
 
-import { Avatar, Button, Card, Input, ListRow } from '@/components/ui';
+import { Avatar, Button, Card, Input, ListRow, serviceGlyph } from '@/components/ui';
 import { BIO_MAX_WORDS, countWords, pickAndUploadAvatar, removeAvatarFile } from '@/lib/avatar';
 import { supabase } from '@/lib/supabase';
 import { colors, shadow } from '@/lib/theme';
+import type { Service } from '@/lib/types';
 import { useAuth } from '@/providers/AuthProvider';
 
 export function ProfileScreen() {
@@ -15,20 +15,30 @@ export function ProfileScreen() {
   const [fullName, setFullName] = useState(profile?.full_name ?? '');
   const [phone, setPhone] = useState(profile?.phone ?? '');
   const [bio, setBio] = useState(profile?.bio ?? '');
+  const [city, setCity] = useState(profile?.city ?? '');
+  const [serviceId, setServiceId] = useState<number | null>(profile?.service_id ?? null);
+  const [services, setServices] = useState<Service[]>([]);
+  const [cnic, setCnic] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [switching, setSwitching] = useState(false);
   const [photoBusy, setPhotoBusy] = useState(false);
+  const isProvider = profile?.role === 'provider';
+
+  useEffect(() => {
+    if (!isProvider || !profile) return;
+    supabase.from('services').select('*').eq('is_active', true).order('sort').then(({ data }) => setServices((data as Service[]) ?? []));
+    supabase.from('provider_kyc').select('cnic').eq('user_id', profile.id).maybeSingle().then(({ data }) => setCnic(data?.cnic ?? null));
+  }, [isProvider, profile]);
 
   if (!session || !profile) return null;
 
-  const isProvider = profile.role === 'provider';
-  const otherRole = isProvider ? 'customer' : 'provider';
   const words = countWords(bio);
   const tooLong = words > BIO_MAX_WORDS;
   const dirty =
     fullName.trim() !== profile.full_name ||
     (phone.trim() || null) !== (profile.phone ?? null) ||
-    bio.trim() !== (profile.bio ?? '').trim();
+    bio.trim() !== (profile.bio ?? '').trim() ||
+    city.trim() !== (profile.city ?? '') ||
+    (isProvider && serviceId !== (profile.service_id ?? null));
 
   async function onSave() {
     if (tooLong) {
@@ -38,7 +48,7 @@ export function ProfileScreen() {
     setSaving(true);
     const { error } = await supabase
       .from('profiles')
-      .update({ full_name: fullName.trim(), phone: phone.trim() || null, bio: bio.trim() })
+      .update({ full_name: fullName.trim(), phone: phone.trim() || null, bio: bio.trim(), city: city.trim(), ...(isProvider ? { service_id: serviceId } : {}) })
       .eq('id', profile!.id);
     await refreshProfile();
     setSaving(false);
@@ -80,19 +90,6 @@ export function ProfileScreen() {
       { text: 'Remove photo', style: 'destructive', onPress: removePhoto },
       { text: 'Cancel', style: 'cancel' },
     ]);
-  }
-
-  async function onSwitchRole() {
-    setSwitching(true);
-    const { error } = await supabase.from('profiles').update({ role: otherRole }).eq('id', profile!.id);
-    if (error) {
-      setSwitching(false);
-      Alert.alert('Could not switch', error.message);
-      return;
-    }
-    await refreshProfile();
-    setSwitching(false);
-    router.replace('/');
   }
 
   function confirmLogout() {
@@ -156,6 +153,7 @@ export function ProfileScreen() {
               placeholder="03xx xxxxxxx"
               hint={isProvider && !phone ? 'Add a phone number so customers can reach you.' : undefined}
             />
+            <Input label="City / area" icon="business-outline" value={city} onChangeText={setCity} placeholder="e.g. Lahore, Gulberg" />
             <View>
               <Input
                 label="Short bio"
@@ -179,14 +177,39 @@ export function ProfileScreen() {
             <Button title="Save changes" onPress={onSave} loading={saving} disabled={!dirty || tooLong} />
           </Card>
 
+          {isProvider ? (
+            <Card className="gap-3 p-5">
+              <Text className="text-base font-bold text-ink">My work</Text>
+              <Text className="-mt-2 text-[13px] text-slate-500">Requests for this category reach you when you are online. Save to apply.</Text>
+              <View className="flex-row flex-wrap gap-2">
+                {services.map((s) => {
+                  const on = serviceId === s.id;
+                  return (
+                    <Pressable
+                      key={s.id}
+                      onPress={() => setServiceId(s.id)}
+                      accessibilityRole="radio"
+                      accessibilityState={{ checked: on }}
+                      className={`flex-row items-center gap-2 rounded-2xl border-2 px-3 py-2.5 ${on ? 'border-brand-600 bg-brand-50' : 'border-line bg-white'}`}
+                    >
+                      <MaterialCommunityIcons name={serviceGlyph(s)} size={18} color={on ? colors.brand : colors.muted} />
+                      <Text className={`text-[13px] font-semibold ${on ? 'text-brand-800' : 'text-slate-600'}`}>{s.name}</Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+              <View className="flex-row items-center gap-2 rounded-xl bg-surface px-3 py-2.5">
+                <Ionicons name="card-outline" size={17} color={colors.brand} />
+                <Text className="flex-1 text-[13px] text-slate-600">
+                  CNIC {cnic ? `${cnic.slice(0, 5)}-•••••••-${cnic.slice(12)}` : 'not added, contact Eizi support'}
+                </Text>
+                {cnic ? <Ionicons name="shield-checkmark" size={16} color={colors.success} /> : null}
+              </View>
+            </Card>
+          ) : null}
+
           {/* Account */}
           <Card className="py-1">
-            <ListRow
-              icon="swap-horizontal"
-              label={isProvider ? 'Switch to customer' : 'Become a service provider'}
-              onPress={switching ? undefined : onSwitchRole}
-            />
-            <View className="ml-[68px] h-px bg-slate-100" />
             <ListRow icon="log-out-outline" label="Log out" danger onPress={confirmLogout} />
           </Card>
 

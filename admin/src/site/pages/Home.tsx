@@ -37,26 +37,26 @@ const FLOWS: Record<FlowKey, { label: string; short: string; icon: LucideIcon; i
     label: 'Book a service',
     short: 'Customer',
     icon: House,
-    intro: 'From opening the app to a confirmed booking — usually in under a minute.',
+    intro: 'Tick what you need, pin your location, approve the price. A nearby worker does the rest.',
     steps: [
       { screen: 'splash', title: 'Open Eizi', text: 'A quick, friendly start — your account is remembered, so you land right on your home screen.' },
       { screen: 'signup', title: 'Create your account', text: 'Choose “Customer” once when you sign up. Next time you just log in and you’re home.' },
-      { screen: 'home', title: 'Find what you need', text: 'Search or browse services grouped by Cleaning, Repairs and Daily help — each card shows the starting price per hour.', tip: 'Prices are set by the pros themselves — compare and choose.' },
-      { screen: 'providers', title: 'Compare pros', text: 'See every available professional with their hourly rate, photo and short bio, cheapest first.' },
-      { screen: 'book', title: 'Pick hours, day & time', text: 'Choose 1 to 12 hours, a day and a start time, and add your address. The total updates as you go.', tip: 'No hidden charges — rate × hours, shown before you confirm.' },
-      { screen: 'pay', title: 'Choose how to pay', text: 'Pay cash to the pro after the job, or pay from your Eizi wallet in one tap.', tip: 'Wallet payments are held safely until the job is done.' },
-      { screen: 'bookings', title: 'Track your booking', text: 'Watch it go from Pending to Confirmed to Completed. Call your pro, or cancel before it starts.' },
+      { screen: 'home', title: 'Choose a category', text: 'Cleaning, Cooking & Kitchen Help, Electrician, Laundry or Dishwashing. Each card shows the base visiting fee.' },
+      { screen: 'providers', title: 'Tick the exact jobs', text: 'Fan Fitting + Switchboard Repair, Washroom Deep Cleaning, Aata Kneading… select one or more with simple checkboxes.' },
+      { screen: 'book', title: 'Pin your location & request', text: 'Use your current GPS location, add your house number and send the request. It reaches verified workers near you.', tip: 'The first nearby worker to accept is on the way, and you get a notification.' },
+      { screen: 'pay', title: 'Approve the price', text: 'The worker checks the job on site and sends the final price. Approve it and choose cash or your Eizi wallet.', tip: 'Work starts only after you approve. Wallet payments are held safely until the job is done.' },
+      { screen: 'bookings', title: 'Track it & rate', text: 'Follow every step live, call your worker, and give a 5-star rating when the job is done.' },
     ],
   },
   provider: {
-    label: 'Earn as a pro',
-    short: 'Provider',
+    label: 'Earn as a worker',
+    short: 'Worker',
     icon: HardHat,
-    intro: 'Set your own price, choose the jobs you want and get paid into your wallet.',
+    intro: 'Go online, accept jobs near you, quote a fair price and get paid in cash or to your wallet.',
     steps: [
-      { screen: 'p-services', title: 'Add your service & price', text: 'Pick what you do — cooking, cleaning, electrical, AC and more — and set your price per hour.', tip: 'Ready-made descriptions help you get listed in seconds.' },
-      { screen: 'p-dashboard', title: 'Get booking requests', text: 'New requests appear on your dashboard with a notification. Accept the ones that suit you.' },
-      { screen: 'p-complete', title: 'Do the job, mark it done', text: 'After the work, tap “Mark job as completed”. Wallet-paid jobs are credited to you instantly.' },
+      { screen: 'p-services', title: 'Sign up & go online', text: 'Register with your CNIC and your category, then switch Online. Your location lets nearby requests reach you.' },
+      { screen: 'p-dashboard', title: 'Accept a job near you', text: 'Requests arrive with a sound: customer name, the jobs, address and distance. Accept, then open Google Maps for directions.' },
+      { screen: 'p-complete', title: 'Send your price, finish the job', text: 'Check the work, send the final price, start once the customer approves, then tap “Mark job completed”.', tip: 'Wallet-paid jobs are credited to you instantly.' },
       { screen: 'p-wallet', title: 'Withdraw your earnings', text: 'Request a payout to EasyPaisa, JazzCash, SadaPay or NayaPay whenever you like (from Rs 500).' },
     ],
   },
@@ -70,24 +70,17 @@ const FLOWS: Record<FlowKey, { label: string; short: string; icon: LucideIcon; i
       { screen: 'w-tid', title: 'Send & share the TID', text: 'Transfer from your app, then enter the amount and the transaction ID (TID) from your receipt.' },
       { screen: 'w-verifying', title: 'We verify it', text: 'Our team matches your TID with our statement — every transfer is checked by a person.', tip: 'Each TID can only be used once, so nobody can claim your payment.' },
       { screen: 'w-balance', title: 'Your balance is ready', text: 'The money appears in your wallet with a full history of every top-up, payment and refund.' },
-      { screen: 'pay', title: 'Pay in one tap', text: 'Use your balance at checkout. Cancelled or declined? It comes straight back to your wallet.' },
+      { screen: 'pay', title: 'Pay in one tap', text: 'Choose Wallet when you approve a price. If the job is cancelled, it comes straight back to your wallet.' },
     ],
   },
 }
 
 const FALLBACK_SERVICES = [
-  ['House Cleaner', 'broom', 'Sweeping, mopping, dusting and tidying'],
-  ['Cook', 'chef-hat', 'Home-cooked meals prepared in your kitchen'],
-  ['Electrician', 'flash', 'Wiring, switches, fans, lights and repairs'],
-  ['Plumber', 'pipe-wrench', 'Leaks, taps, drains and fittings'],
-  ['AC Technician', 'air-conditioner', 'AC service, gas refill and repair'],
-  ['Dishwasher', 'dishwasher', 'Dishes washed, kitchen sink cleared'],
-  ['Laundry', 'washing-machine', 'Washing, drying and ironing clothes'],
-  ['Carpenter', 'saw-blade', 'Furniture repair, doors and woodwork'],
-  ['Painter', 'format-paint', 'Walls, doors and touch-ups'],
-  ['Babysitter', 'baby-face-outline', 'Trusted childcare at home'],
-  ['Driver', 'car-outline', 'Personal driver for your own car'],
-  ['Gardener', 'flower-outline', 'Lawn, plants and garden upkeep'],
+  ['Cleaning Services', 'broom', 'Sweeping, mopping, dusting, washrooms and kitchen scrubbing'],
+  ['Cooking & Kitchen Help', 'chef-hat', 'Daily meals, chopping, aata kneading and kitchen wiping'],
+  ['Electrician Services', 'flash', 'Switchboards, fans, lights, UPS wiring and DB box checks'],
+  ['Laundry Support', 'washing-machine', 'Ironing, washing, delicates and wardrobe organizing'],
+  ['Dishwashing & Utensils', 'dishwasher', 'Daily dishes, party pots and sink sanitization'],
 ].map(([name, icon, description], i) => ({ id: i + 1, name, icon, description, image_url: null as string | null }))
 
 type Svc = (typeof FALLBACK_SERVICES)[number]
@@ -96,11 +89,11 @@ const TINTS = ['#E6F6F2', '#FFF3E0', '#EEF2FF', '#FDECF2', '#E7F3FE', '#F3EEFD']
 const FG = ['#0B6358', '#B45309', '#4338CA', '#BE185D', '#1D4ED8', '#6D28D9']
 
 const FAQ = [
-  ['How is the price calculated?', 'Every pro sets an hourly rate. You choose how many hours you need, and Eizi shows the total (rate × hours) before you confirm — no hidden charges.'],
-  ['Do I have to pay in advance?', 'No. You can pay cash to the pro after the job. If you prefer, pay from your Eizi wallet — the money is held safely and only released when the job is completed.'],
-  ['What if I need to cancel?', 'You can cancel a pending or confirmed booking from the app before it starts. Wallet payments are refunded to your wallet instantly.'],
+  ['How is the price decided?', 'You see the base visiting fee before you request. The worker checks the job at your home and sends the final price in the app. Nothing starts until you approve it, and the visiting fee is adjusted in that price.'],
+  ['Do I have to pay in advance?', 'No. Pay cash to the worker after the job. If you prefer, pay from your Eizi wallet when you approve the price: the money is held safely and only released when the job is completed.'],
+  ['What if I don’t like the price?', 'Decline it. The worker can send a new price, or leave and you pay only the visiting fee. You can also cancel any time before you approve a price.'],
   ['How do I add money to my wallet?', 'Send money from EasyPaisa, JazzCash, SadaPay or NayaPay to Eizi’s account shown in the app, then enter the transaction ID. Our team verifies it and adds it to your balance.'],
-  ['How can I work as a provider on Eizi?', 'Download the app, sign up as a Provider, add the services you offer with your hourly price, and start accepting requests. Your earnings can be withdrawn to your mobile wallet.'],
+  ['How can I work on Eizi?', 'Download the app, sign up as a Worker with your CNIC and service category, go online and accept requests near you. Earnings can be withdrawn to your mobile wallet.'],
   ['Is the app available on iPhone?', 'Eizi is available for Android today. Get in touch if you’d like to know when the iPhone version is ready.'],
 ]
 
@@ -108,8 +101,8 @@ const FAQ = [
 
 export function Home() {
   usePageMeta(
-    'Eizi — Home services, booked by the hour',
-    'Book cooks, cleaners, electricians, plumbers, AC technicians and more by the hour. See the price upfront, pay cash or from your Eizi wallet.',
+    'Eizi — Your Home, Our Care',
+    'On-demand home services: cleaning, cooking help, electricians, laundry and dishwashing. Tick what you need, approve the price, pay cash or from your Eizi wallet.',
   )
   const [services, setServices] = useState<Svc[]>(FALLBACK_SERVICES)
 
@@ -118,7 +111,7 @@ export function Home() {
     if (missingConfig) return
     supabase
       .from('services')
-      .select('id, name, icon, description, image_url')
+      .select('id, name, icon, description, image_url').eq('is_active', true).order('sort')
       .order('name')
       .then(({ data }) => {
         if (data && data.length) setServices(data as Svc[])
@@ -130,7 +123,7 @@ export function Home() {
       <Hero />
       <TrustBar />
 
-      <Section id="services" eyebrow="Services" title="Help for every corner of your home" intro="Book trusted pros for everyday chores and repairs — by the hour, at the price they set." center>
+      <Section id="services" eyebrow="Services" title="Help for every corner of your home" intro="Tick the exact jobs you need. A verified worker nearby checks the work and you approve the price." center>
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
           {services.map((s) => {
             const { Icon } = resolveIcon(s)
@@ -157,8 +150,8 @@ export function Home() {
 
       <Section eyebrow="Why Eizi" title="Simple, fair and safe" intro="Everything is designed so you know what you’ll pay and who is coming — before you book." className="bg-white" center>
         <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-          <FeatureCard icon={Clock} title="Pay by the hour" text="Book exactly the time you need — 1 hour or a full day. The total is shown before you confirm." />
-          <FeatureCard icon={ReceiptText} tone="amber" title="Prices up front" text="Pros set their own hourly rates and you compare them side by side. No surprises at the door." />
+          <FeatureCard icon={Clock} title="Help nearby, fast" text="Your request goes to online workers around you. The first to accept is on the way, and you get a notification." />
+          <FeatureCard icon={ReceiptText} tone="amber" title="You approve the price" text="See the visiting fee upfront. The final price is agreed in the app before any work starts. No surprises." />
           <FeatureCard icon={HandCoins} tone="blue" title="Cash or wallet" text="Pay cash after the job, or one-tap from your Eizi wallet topped up via EasyPaisa, JazzCash and more." />
           <FeatureCard icon={ShieldCheck} title="Money held safely" text="Wallet payments are only released to the pro after the job is marked completed." />
           <FeatureCard icon={RotateCcw} tone="violet" title="Instant refunds" text="Cancel before it starts or if a pro declines — wallet payments come straight back." />
@@ -187,7 +180,7 @@ function Hero() {
         <div className="relative mx-auto grid max-w-7xl items-center gap-12 lg:grid-cols-[1fr_1.05fr]">
           <div>
             <span className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-xs font-semibold tracking-wide text-brand-100 ring-1 ring-white/15">
-              <Sparkles className="size-3.5" /> Home services · booked by the hour
+              <Sparkles className="size-3.5" /> Your Home, Our Care
             </span>
             <h1 className="text-shine mt-5 text-[2.6rem] leading-[1.05] font-black tracking-tight sm:text-6xl">
               Ghar ki har service,
@@ -195,7 +188,7 @@ function Hero() {
               ek tap door.
             </h1>
             <p className="mt-5 max-w-xl text-lg leading-8 text-brand-100/90">
-              Cooks, cleaners, electricians, plumbers, AC technicians and more. Pick the hours you need, see the price upfront, and pay cash or from your Eizi wallet.
+              Cleaning, cooking help, electricians, laundry and dishwashing. Tick what you need, pin your location, approve the price, and pay cash or from your Eizi wallet.
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
               <DownloadButton size="lg" variant="light" />
@@ -441,11 +434,11 @@ function Providers() {
           <p className="text-xs font-bold tracking-[0.18em] text-brand-300 uppercase">For professionals</p>
           <h2 className="mt-2 text-3xl font-extrabold tracking-tight sm:text-4xl">Your skills. Your price. Your schedule.</h2>
           <p className="mt-3 text-base leading-7 text-brand-100/90 sm:text-lg">
-            Join Eizi as a provider and get booking requests from customers near you. You decide your hourly rate and which jobs to accept.
+            Join Eizi as a worker and get job requests from customers near you. Go online when you’re free and send your price after checking the work.
           </p>
           <ul className="mt-6 space-y-3">
             {[
-              'Set your own hourly price for each service',
+              'Go online and get jobs near you, with sound alerts',
               'Accept or decline every request',
               'Wallet-paid jobs are credited the moment you finish',
               'Withdraw to EasyPaisa, JazzCash, SadaPay or NayaPay',
@@ -457,7 +450,7 @@ function Providers() {
           </ul>
           <div className="mt-8 flex flex-wrap items-center gap-4">
             <DownloadButton variant="light" />
-            <span className="text-sm text-brand-200">Sign up and choose “Provider”.</span>
+            <span className="text-sm text-brand-200">Sign up and choose “Worker”.</span>
           </div>
         </div>
       </div>

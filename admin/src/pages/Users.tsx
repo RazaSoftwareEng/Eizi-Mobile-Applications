@@ -33,14 +33,32 @@ import { must, useLoad } from '../lib/useLoad'
 type Filter = 'all' | 'today' | 'customer' | 'provider' | 'none'
 
 async function loadUsers(): Promise<UserRow[]> {
-  const [profiles, accounts] = await Promise.all([
-    supabase.from('profiles').select('id, full_name, phone, role, created_at, avatar_url, bio').order('created_at', { ascending: false }).then((r) => must(r) as Profile[]),
+  const [profiles, accounts, kyc, presence, services] = await Promise.all([
+    supabase
+      .from('profiles')
+      .select('id, full_name, phone, role, created_at, avatar_url, bio, city, service_id, rating_avg, rating_count')
+      .order('created_at', { ascending: false })
+      .then((r) => must(r) as Profile[]),
     supabase.rpc('admin_list_accounts').then((r) => must(r) as Account[]),
+    supabase.from('provider_kyc').select('user_id, cnic').then((r) => must(r) as { user_id: string; cnic: string }[]),
+    supabase.from('provider_presence').select('user_id, is_online').then((r) => must(r) as { user_id: string; is_online: boolean }[]),
+    supabase.from('services').select('id, name').then((r) => must(r) as { id: number; name: string }[]),
   ])
   const byId = new Map(accounts.map((a) => [a.id, a]))
+  const cnic = new Map(kyc.map((k) => [k.user_id, k.cnic]))
+  const online = new Map(presence.map((x) => [x.user_id, x.is_online]))
+  const svc = new Map(services.map((x) => [x.id, x.name]))
   return profiles.map((p) => {
     const a = byId.get(p.id)
-    return { ...p, email: a?.email ?? null, last_sign_in_at: a?.last_sign_in_at ?? null, email_confirmed_at: a?.email_confirmed_at ?? null }
+    return {
+      ...p,
+      email: a?.email ?? null,
+      last_sign_in_at: a?.last_sign_in_at ?? null,
+      email_confirmed_at: a?.email_confirmed_at ?? null,
+      cnic: cnic.get(p.id) ?? null,
+      online: online.get(p.id) ?? false,
+      service_name: p.service_id ? (svc.get(p.service_id) ?? null) : null,
+    }
   })
 }
 
@@ -134,7 +152,8 @@ export function Users() {
             head={
               <tr>
                 <Th>User</Th>
-                <Th className="hidden md:table-cell">Phone</Th>
+                <Th className="hidden md:table-cell">Contact</Th>
+                <Th className="hidden lg:table-cell">Work / city</Th>
                 <Th>Role</Th>
                 <Th className="hidden lg:table-cell">Joined</Th>
                 <Th className="hidden xl:table-cell">Last sign-in</Th>
@@ -159,7 +178,26 @@ export function Users() {
                     </div>
                   </div>
                 </Td>
-                <Td className="hidden whitespace-nowrap text-slate-600 md:table-cell">{u.phone || '—'}</Td>
+                <Td className="hidden whitespace-nowrap text-slate-600 md:table-cell">
+                  <p>{u.phone || '—'}</p>
+                  {u.cnic ? <p className="font-mono text-xs text-slate-400">CNIC {u.cnic.slice(0, 5)}-{u.cnic.slice(5, 12)}-{u.cnic.slice(12)}</p> : null}
+                </Td>
+                <Td className="hidden text-slate-600 lg:table-cell">
+                  {u.role === 'provider' ? (
+                    <>
+                      <p className="font-medium text-ink">{u.service_name || 'No category'}</p>
+                      <p className="flex items-center gap-2 text-xs text-slate-500">
+                        <span className={`inline-flex items-center gap-1 ${u.online ? 'text-emerald-700' : ''}`}>
+                          <span className={`size-1.5 rounded-full ${u.online ? 'bg-emerald-500' : 'bg-slate-300'}`} />
+                          {u.online ? 'Online' : 'Offline'}
+                        </span>
+                        {u.rating_count ? <span>★ {Number(u.rating_avg).toFixed(1)} ({u.rating_count})</span> : null}
+                      </p>
+                    </>
+                  ) : (
+                    <p>{u.city || '—'}</p>
+                  )}
+                </Td>
                 <Td>
                   <RoleBadge role={u.role} />
                 </Td>

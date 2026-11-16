@@ -1,6 +1,6 @@
 import { Link } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { Alert, Text, View } from 'react-native';
+import { Alert, Pressable, Text, View } from 'react-native';
 
 import { AuthShell } from '@/components/AuthHeader';
 import { Button, Checkbox, Input } from '@/components/ui';
@@ -45,22 +45,30 @@ export default function Login() {
     // The (auth) layout sees the new session and redirects.
   }
 
+  async function onForgot() {
+    const target = email.trim();
+    if (!target.includes('@')) {
+      Alert.alert('Enter your email', 'Type the email you signed up with, then tap "Forgot Password?" again.');
+      return;
+    }
+    const { error } = await supabase.auth.resetPasswordForEmail(target);
+    if (error) Alert.alert('Could not send email', error.message);
+    else Alert.alert('Check your email', `We sent a password reset link to ${target}.`);
+  }
+
   return (
     <AuthShell
-      title={'Ghar ki har service,\nek tap door.'}
-      subtitle="Cooks, electricians, cleaners and more — booked by the hour."
+      title="Welcome Back"
+      subtitle="Login to book home services anytime, anywhere."
       footer={
         <View className="flex-row justify-center">
-          <Text className="text-[15px] text-slate-500">New to Eizi? </Text>
+          <Text className="text-[15px] text-slate-500">Don&apos;t have an account? </Text>
           <Link href="/signup" className="text-[15px] font-bold text-brand-700">
-            Create an account
+            Sign Up
           </Link>
         </View>
       }
     >
-      <Text className="mb-1 text-2xl font-bold text-ink">Welcome back</Text>
-      <Text className="mb-6 text-[15px] text-slate-500">Log in to continue</Text>
-
       <View className="gap-4">
         <Input
           label="Email"
@@ -83,9 +91,14 @@ export default function Login() {
           onSubmitEditing={onLogin}
         />
 
-        <Checkbox checked={remember} onChange={setRemember} label="Remember me" />
+        <View className="flex-row items-center justify-between">
+          <Checkbox checked={remember} onChange={setRemember} label="Remember me" />
+          <Pressable onPress={onForgot} hitSlop={8} accessibilityRole="button">
+            <Text className="text-[14px] font-semibold text-brand-700">Forgot Password?</Text>
+          </Pressable>
+        </View>
 
-        <Button title="Log in" onPress={onLogin} loading={loading} className="mt-2" />
+        <Button title="Login" onPress={onLogin} loading={loading} className="mt-2" />
       </View>
     </AuthShell>
   );

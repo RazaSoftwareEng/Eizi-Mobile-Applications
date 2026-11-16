@@ -6,7 +6,8 @@ import { formatPrice } from '@/lib/format';
 import { colors, shadow, tintFor } from '@/lib/theme';
 import type { Service } from '@/lib/types';
 
-export type ServiceStat = { count: number; from: number };
+/** How many sub-services a category has (shown on the card). */
+export type ServiceStat = { tasks: number };
 
 /* ------------------------------------------------------------------ illustrated service card (2 per row) */
 
@@ -23,7 +24,6 @@ export function cardWidthFor(screenWidth: number) {
 
 export function ServiceCard({ service, stat, width, onPress }: { service: Service; stat?: ServiceStat; width: number; onPress: () => void }) {
   const tint = tintFor(service.id);
-  const available = !!stat;
 
   // Everything scales from the card width so proportions hold on 320px phones and large ones alike.
   const pad = width < 160 ? 12 : 14;
@@ -38,11 +38,7 @@ export function ServiceCard({ service, stat, width, onPress }: { service: Servic
       <Pressable
         onPress={onPress}
         accessibilityRole="button"
-        accessibilityLabel={
-          available
-            ? `${service.name}, ${stat.count} ${stat.count === 1 ? 'pro' : 'pros'} available, from ${formatPrice(stat.from)} per hour`
-            : `${service.name}, coming soon`
-        }
+        accessibilityLabel={`${service.name}, ${stat?.tasks ?? 0} services, visiting fee ${formatPrice(service.visit_fee)}`}
         className="flex-1 rounded-3xl bg-white active:opacity-90"
         style={[shadow.md, { padding: pad }]}
       >
@@ -87,33 +83,23 @@ export function ServiceCard({ service, stat, width, onPress }: { service: Servic
           {service.name}
         </Text>
         <Text className="mt-0.5 text-[13px] text-slate-500" numberOfLines={1} maxFontSizeMultiplier={1.3}>
-          {available ? `${stat.count} ${stat.count === 1 ? 'pro' : 'pros'} available` : 'New on Eizi'}
+          {stat?.tasks ? `${stat.tasks} services` : service.description}
         </Text>
 
-        {available ? (
-          <View className="mt-3 flex-row items-center gap-1.5 self-start rounded-full bg-brand-50 px-2.5 py-1.5" style={{ maxWidth: '100%' }}>
-            {!compact ? <MaterialCommunityIcons name="cash-multiple" size={14} color={colors.brand} /> : null}
-            {/* shrinks to fit instead of truncating on narrow phones */}
-            <Text
-              className="shrink text-[12px] font-bold text-brand-800"
-              numberOfLines={1}
-              adjustsFontSizeToFit
-              minimumFontScale={0.75}
-              maxFontSizeMultiplier={1.2}
-            >
-              {/* narrow phones: drop "from" so the price always fits (screen readers still hear "from") */}
-              {!compact ? <Text className="font-medium text-brand-600">from </Text> : null}
-              {formatPrice(stat.from)}/hr
-            </Text>
-          </View>
-        ) : (
-          <View className="mt-3 flex-row items-center gap-1.5 self-start rounded-full bg-violet-50 px-2.5 py-1.5">
-            <Ionicons name="time-outline" size={14} color="#6D28D9" />
-            <Text className="text-[12px] font-bold text-violet-700" numberOfLines={1} maxFontSizeMultiplier={1.2}>
-              Coming soon
-            </Text>
-          </View>
-        )}
+        <View className="mt-3 flex-row items-center gap-1.5 self-start rounded-full bg-brand-50 px-2.5 py-1.5" style={{ maxWidth: '100%' }}>
+          {!compact ? <MaterialCommunityIcons name="home-import-outline" size={14} color={colors.brand} /> : null}
+          {/* shrinks to fit instead of truncating on narrow phones */}
+          <Text
+            className="shrink text-[12px] font-bold text-brand-800"
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            minimumFontScale={0.75}
+            maxFontSizeMultiplier={1.2}
+          >
+            {!compact ? <Text className="font-medium text-brand-600">Visit </Text> : null}
+            {formatPrice(service.visit_fee)}
+          </Text>
+        </View>
       </Pressable>
     </View>
   );
@@ -139,7 +125,7 @@ export function ServiceRow({ service, stat, onPress }: { service: Service; stat?
       <View className="flex-1">
         <Text className="text-base font-bold text-ink">{service.name}</Text>
         <Text className="text-[13px] text-slate-500" numberOfLines={1}>
-          {stat ? `${stat.count} ${stat.count === 1 ? 'pro' : 'pros'} · from ${formatPrice(stat.from)}/hr` : service.description || 'Coming soon'}
+          {stat?.tasks ? `${stat.tasks} services · visit ${formatPrice(service.visit_fee)}` : service.description}
         </Text>
       </View>
       <Ionicons name="chevron-forward" size={20} color={colors.subtle} />
@@ -150,9 +136,10 @@ export function ServiceRow({ service, stat, onPress }: { service: Service; stat?
 /* ------------------------------------------------------------------ how it works */
 
 const STEPS = [
-  { icon: 'search' as const, title: 'Choose a service', text: 'Pick what you need and compare pros & hourly rates.' },
-  { icon: 'time' as const, title: 'Pick your hours', text: 'Book 1, 2 or more hours — the total is shown upfront.' },
-  { icon: 'home' as const, title: 'Pro comes to you', text: 'They confirm, arrive on time, and you pay after the job.' },
+  { icon: 'list' as const, title: 'Tick what you need', text: 'Choose a category and the exact jobs — e.g. Fan Fitting + Switchboard Repair.' },
+  { icon: 'location' as const, title: 'Pin your location', text: 'Your request goes to verified workers nearby. The first to accept is on the way.' },
+  { icon: 'pricetag' as const, title: 'Approve the price', text: 'The worker checks the job and sends a price. Work starts only when you approve.' },
+  { icon: 'star' as const, title: 'Pay & rate', text: 'Pay cash or from your wallet when it is done, then rate your worker.' },
 ];
 
 export function HowItWorks() {
