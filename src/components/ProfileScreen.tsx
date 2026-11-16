@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, View } from 'react-native';
 
 import { Avatar, Button, Card, Input, ListRow, serviceGlyph } from '@/components/ui';
-import { BIO_MAX_WORDS, countWords, pickAndUploadAvatar, removeAvatarFile } from '@/lib/avatar';
+import { AvatarError, BIO_MAX_WORDS, countWords, pickAndUploadAvatar, removeAvatarFile, uploadHint } from '@/lib/avatar';
 import { supabase } from '@/lib/supabase';
 import { colors, shadow } from '@/lib/theme';
 import type { Service } from '@/lib/types';
@@ -63,11 +63,18 @@ export function ProfileScreen() {
       const res = await pickAndUploadAvatar(profile!.id);
       if (!res) return; // cancelled
       const { error } = await supabase.from('profiles').update({ avatar_url: res.url }).eq('id', profile!.id);
-      if (error) throw error;
+      if (error) {
+        await removeAvatarFile(res.url); // don't leave an unused file behind
+        throw new AvatarError('Saving', error.message, uploadHint(error.message));
+      }
       await removeAvatarFile(old);
       await refreshProfile();
+      Alert.alert('Photo updated', `Your new profile photo is saved (${Math.max(1, Math.round(res.bytes / 1024))} KB).`);
     } catch (e) {
-      Alert.alert('Could not update photo', (e as Error).message);
+      Alert.alert(
+        'Photo upload failed',
+        e instanceof AvatarError ? e.details : new AvatarError('Upload', (e as Error).message, uploadHint((e as Error).message)).details,
+      );
     } finally {
       setPhotoBusy(false);
     }

@@ -793,6 +793,12 @@ create policy "users update own avatar" on storage.objects
   for update to authenticated
   using (bucket_id = 'avatars' and (storage.foldername(name))[1] = auth.uid()::text);
 
+-- Admins can set a photo for any user from the admin portal (the profile check still requires avatars/<that user's id>/...).
+drop policy if exists "admins upload avatars" on storage.objects;
+create policy "admins upload avatars" on storage.objects
+  for insert to authenticated
+  with check (bucket_id = 'avatars' and public.is_admin());
+
 drop policy if exists "users delete own avatar" on storage.objects;
 create policy "users delete own avatar" on storage.objects
   for delete to authenticated

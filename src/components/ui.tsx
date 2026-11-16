@@ -217,10 +217,12 @@ export function EmptyState({ icon, title, subtitle, children }: {
 /* --------------------------------------------------------------- Pieces */
 
 export function Avatar({ name, size = 48, light, uri }: { name: string; size?: number; light?: boolean; uri?: string | null }) {
-  if (uri) {
+  const [broken, setBroken] = useState<string | null>(null);
+  if (uri && broken !== uri) {
     return (
       <Image
         source={{ uri }}
+        onError={() => setBroken(uri)}
         style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: light ? 'rgba(255,255,255,0.2)' : colors.brandSoft }}
         accessibilityLabel={`${name || 'User'} photo`}
       />

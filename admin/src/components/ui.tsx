@@ -203,7 +203,9 @@ export function ErrorBanner({ message, onRetry }: { message: string; onRetry?: (
 
 export function Avatar({ name, size = 'md', src }: { name: string | null | undefined; size?: 'sm' | 'md' | 'lg'; src?: string | null }) {
   const dims = size === 'lg' ? 'size-16 text-lg' : size === 'md' ? 'size-9 text-xs' : 'size-7 text-[11px]'
-  if (src) return <img src={src} alt='' loading='lazy' className={cx('shrink-0 rounded-full bg-brand-50 object-cover', dims)} />
+  const [broken, setBroken] = useState<string | null>(null)
+  if (src && broken !== src)
+    return <img src={src} alt='' loading='lazy' onError={() => setBroken(src)} className={cx('shrink-0 rounded-full bg-brand-50 object-cover', dims)} />
   return (
     <span
       className={cx(

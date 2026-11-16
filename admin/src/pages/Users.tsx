@@ -26,6 +26,7 @@ import {
   Th,
 } from '../components/ui'
 import { errorMessage, formatDate, isToday, timeAgo } from '../lib/format'
+import { formatBytes, optimizeToWebp, type OptimizedImage } from '../lib/imageOptimize'
 import { signupClient, supabase } from '../lib/supabase'
 import type { Account, Profile, Role, UserRow } from '../lib/types'
 import { must, useLoad } from '../lib/useLoad'
@@ -266,6 +267,23 @@ function RoleSelect({ value, onChange }: { value: Role | ''; onChange: (v: Role 
   )
 }
 
+const AVATARS = 'avatars'
+
+function photoHint(msg: string) {
+  const m = msg.toLowerCase()
+  if (m.includes('bucket not found')) return 'Run the latest supabase/schema.sql to create photo storage.'
+  if (m.includes('row-level security') || m.includes('unauthorized')) return 'Admin photo permission missing: run the latest supabase/schema.sql.'
+  if (m.includes('mime')) return 'This image type is not allowed by the bucket.'
+  if (m.includes('size')) return 'The photo is too big, try another one.'
+  return ''
+}
+
+async function removeStoredAvatar(url: string | null | undefined) {
+  const marker = `/storage/v1/object/public/${AVATARS}/`
+  const i = url?.indexOf(marker) ?? -1
+  if (url && i >= 0) await supabase.storage.from(AVATARS).remove([decodeURIComponent(url.slice(i + marker.length))])
+}
+
 function EditUser({ user, onClose, onSaved }: { user: UserRow; onClose: () => void; onSaved: () => void }) {
   const toast = useToast()
   const [name, setName] = useState(user.full_name)
@@ -273,24 +291,70 @@ function EditUser({ user, onClose, onSaved }: { user: UserRow; onClose: () => vo
   const [role, setRole] = useState<Role | ''>(user.role ?? '')
   const [bio, setBio] = useState(user.bio ?? '')
   const [removePhoto, setRemovePhoto] = useState(false)
-  const bioWords = bio.trim() ? bio.trim().split(/s+/).length : 0
+  const [photo, setPhoto] = useState<OptimizedImage | null>(null)
+  const [preview, setPreview] = useState<string | null>(null)
+  const [photoBusy, setPhotoBusy] = useState(false)
+  const [photoError, setPhotoError] = useState<string | null>(null)
+  const bioWords = bio.trim() ? bio.trim().split(/\s+/).length : 0
   const [busy, setBusy] = useState(false)
+
+  async function pickPhoto(f: File | null) {
+    if (!f) return
+    setPhotoError(null)
+    setPhotoBusy(true)
+    try {
+      // Any image in → small square-ish WebP out (max 400px, ~60 KB) — same size the app uploads.
+      const out = await optimizeToWebp(f, { maxSide: 400, targetBytes: 60 * 1024 })
+      if (preview) URL.revokeObjectURL(preview)
+      setPhoto(out)
+      setPreview(URL.createObjectURL(out.blob))
+      setRemovePhoto(false)
+    } catch (e) {
+      setPhotoError(`Step: Processing — ${(e as Error).message}`)
+    } finally {
+      setPhotoBusy(false)
+    }
+  }
 
   async function save() {
     setBusy(true)
+    setPhotoError(null)
+    let avatar_url: string | null | undefined
+    if (photo) {
+      const path = `${user.id}/avatar-${Date.now()}.webp`
+      const up = await supabase.storage.from(AVATARS).upload(path, photo.blob, { contentType: 'image/webp', cacheControl: '31536000' })
+      if (up.error) {
+        setBusy(false)
+        setPhotoError(`Step: Upload — ${up.error.message}. ${photoHint(up.error.message)}`)
+        return
+      }
+      avatar_url = supabase.storage.from(AVATARS).getPublicUrl(path).data.publicUrl
+      const check = await fetch(avatar_url, { headers: { Range: 'bytes=0-15' } }).then((r) => r.status).catch(() => 0)
+      if (check >= 400) {
+        setBusy(false)
+        setPhotoError(`Step: Check — uploaded but the photo cannot be opened (HTTP ${check}). Make sure the "avatars" bucket is Public (run the latest schema.sql).`)
+        return
+      }
+    } else if (removePhoto) avatar_url = null
+
     const { error } = await supabase
       .from('profiles')
-      .update({ full_name: name.trim(), phone: phone.trim() || null, role: role || null, bio: bio.trim(), ...(removePhoto ? { avatar_url: null } : {}) })
+      .update({
+        full_name: name.trim(),
+        phone: phone.trim() || null,
+        role: role || null,
+        bio: bio.trim(),
+        ...(avatar_url !== undefined ? { avatar_url } : {}),
+      })
       .eq('id', user.id)
-    if (!error && removePhoto && user.avatar_url) {
-      // best effort: delete the file too (admins may delete in the avatars bucket)
-      const marker = '/storage/v1/object/public/avatars/'
-      const i = user.avatar_url.indexOf(marker)
-      if (i >= 0) await supabase.storage.from('avatars').remove([decodeURIComponent(user.avatar_url.slice(i + marker.length))])
-    }
+    if (!error && avatar_url !== undefined) await removeStoredAvatar(user.avatar_url) // old file, best effort
+    if (error && avatar_url) await removeStoredAvatar(avatar_url)
     setBusy(false)
-    if (error) return toast.error(error.message.includes('profiles_bio_500_words') ? 'Bio must be 500 words or fewer.' : error.message)
-    toast.success('User updated')
+    if (error) {
+      if (photo) setPhotoError(`Step: Saving — ${error.message}`)
+      return toast.error(error.message.includes('profiles_bio_500_words') ? 'Bio must be 500 words or fewer.' : error.message)
+    }
+    toast.success(photo ? 'User updated with new photo' : 'User updated')
     onSaved()
   }
 
@@ -312,18 +376,46 @@ function EditUser({ user, onClose, onSaved }: { user: UserRow; onClose: () => vo
       }
     >
       <div className="space-y-4">
+        <div className="rounded-xl bg-slate-50 p-3">
+          <div className="flex items-center gap-3">
+            <Avatar name={user.full_name} src={removePhoto ? null : (preview ?? user.avatar_url)} size="lg" />
+            <div className="flex-1">
+              <p className="text-sm font-semibold text-ink">Profile photo</p>
+              <p className="text-xs text-slate-500">
+                {photoBusy
+                  ? 'Optimizing…'
+                  : photo
+                    ? `New photo ready · ${formatBytes(photo.originalBytes)} → ${formatBytes(photo.bytes)} WebP. Saved when you click Save.`
+                    : removePhoto
+                      ? 'Photo will be removed when you save.'
+                      : 'JPG, PNG, WebP… auto-resized to a small WebP.'}
+              </p>
+            </div>
+            <label className="cursor-pointer rounded-lg bg-white px-3 py-1.5 text-xs font-semibold text-brand-700 shadow-sm hover:bg-brand-50">
+              {user.avatar_url || photo ? 'Change' : 'Upload'}
+              <input type="file" accept="image/*" className="sr-only" onChange={(e) => pickPhoto(e.target.files?.[0] ?? null)} />
+            </label>
+            {user.avatar_url || photo ? (
+              <button
+                type="button"
+                onClick={() => {
+                  if (preview) URL.revokeObjectURL(preview)
+                  setPhoto(null)
+                  setPreview(null)
+                  setRemovePhoto(!!user.avatar_url)
+                }}
+                className="cursor-pointer rounded-lg px-2 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50"
+              >
+                Remove
+              </button>
+            ) : null}
+          </div>
+          {photoError ? <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-xs font-medium text-red-700">{photoError}</p> : null}
+        </div>
         <TextField label="Full name" value={name} onChange={(e) => setName(e.target.value)} />
         <TextField label="Phone" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="03xx xxxxxxx" />
         <RoleSelect value={role} onChange={setRole} />
         <TextArea label={`Bio (${bioWords}/500 words)`} value={bio} onChange={(e) => setBio(e.target.value)} placeholder="No bio yet" />
-        {user.avatar_url ? (
-          <label className="flex cursor-pointer items-center gap-3 rounded-xl bg-slate-50 p-3">
-            <Avatar name={user.full_name} src={user.avatar_url} size="lg" />
-            <span className="flex-1 text-sm text-slate-600">Profile photo</span>
-            <input type="checkbox" checked={removePhoto} onChange={(e) => setRemovePhoto(e.target.checked)} className="size-4 accent-red-600" />
-            <span className="text-sm font-semibold text-red-600">Remove</span>
-          </label>
-        ) : null}
       </div>
     </Modal>
   )
